@@ -1,0 +1,11 @@
+node_modules
+dist
+.output
+.vercel
+.nitro
+.tanstack
+*.log
+.DS_Store
+wasm/wavetable/target
+.env
+.env.*

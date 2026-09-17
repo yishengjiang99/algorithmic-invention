@@ -1,0 +1,1736 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Core</title>
+<meta name="description" content="Band-limited C wavetable, compiled in the browser by wabt."/>
+<meta name="theme-color" content="#0a0b0d"/>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0b0d'/%3E%3Cpath d='M11 6 L25 16 L11 26 L8 23 L19 16 L8 9 Z' fill='%23ecece8'/%3E%3C/svg%3E"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap"/>
+<style>
+:root {
+  --bg:#0a0b0d; --surface:#121418; --surface-2:#1a1d22; --fg:#ecece8;
+  --muted:#8b8f98; --subtle:#5c616b; --primary:#c5ccd6; --primary-fg:#0a0b0d;
+  --accent:#9eb0c8; --border:#262a31; --ok:#7d9e8e; --warn:#c4a882; --danger:#c47a72;
+}
+* { box-sizing: border-box; }
+html, body { margin:0; background:var(--bg); color:var(--fg);
+  font-family:"IBM Plex Sans", system-ui, sans-serif; -webkit-font-smoothing:antialiased; min-height:100dvh; }
+button { font: inherit; cursor: pointer; }
+button:disabled { opacity:.4; cursor:default; }
+code { font-family:"IBM Plex Mono", ui-monospace, monospace; color:var(--fg); }
+.wrap { max-width: 72rem; margin: 0 auto; padding: 1.5rem 1rem 2.5rem; display:flex; flex-direction:column; gap:1.5rem; }
+header { display:flex; flex-direction:column; gap:1rem; }
+@media (min-width:640px) { header { flex-direction:row; align-items:flex-end; justify-content:space-between; } }
+.kicker { font-family:"IBM Plex Mono", monospace; font-size:12px; letter-spacing:.18em; text-transform:uppercase; color:var(--subtle); }
+h1 { font-size:2rem; font-weight:500; letter-spacing:-.03em; margin:.25rem 0 0; }
+.lede { max-width:28rem; color:var(--muted); font-size:.9rem; line-height:1.55; margin:.5rem 0 0; }
+.tabs { display:flex; height:2.75rem; align-items:center; gap:4px; background:var(--surface); border-radius:999px; padding:4px; }
+.tabs button { height:2.25rem; border:0; background:transparent; color:var(--muted); border-radius:999px; padding:0 14px; font-size:.875rem; font-weight:500; }
+.tabs button.on { background:var(--primary); color:var(--primary-fg); }
+.card { background:var(--surface); border-radius:16px; padding:1.1rem 1.15rem; }
+h2 { font-size:1rem; font-weight:500; margin:0; }
+.muted { color:var(--muted); font-size:.875rem; line-height:1.55; margin:.5rem 0 0; }
+.row { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; }
+.btn { height:2.75rem; border:0; border-radius:12px; padding:0 1rem; font-size:.875rem; font-weight:500;
+  background:var(--primary); color:var(--primary-fg); display:inline-flex; align-items:center; gap:.5rem; }
+.btn.sec { background:var(--surface-2); color:var(--fg); box-shadow:0 0 0 1px rgba(255,255,255,.08); }
+.btn.danger { background:rgba(196,122,114,.15); color:var(--danger); }
+.badge { display:inline-flex; align-items:center; border-radius:999px; padding:.15rem .5rem;
+  font-family:"IBM Plex Mono", monospace; font-size:.6875rem; letter-spacing:.04em; text-transform:uppercase;
+  background:var(--surface-2); color:var(--muted); }
+.badge.ok { background:rgba(125,158,142,.15); color:var(--ok); }
+.badge.accent { background:rgba(158,176,200,.15); color:var(--accent); }
+.badge.danger { background:rgba(196,122,114,.15); color:var(--danger); }
+.grid2 { display:grid; gap:.75rem; }
+@media (min-width:640px) { .grid2 { grid-template-columns:1fr 1fr; } }
+.grid4 { display:grid; grid-template-columns:1fr 1fr; gap:.75rem; }
+@media (min-width:640px) { .grid4 { grid-template-columns:repeat(4,1fr); } }
+.stat { background:var(--surface-2); border-radius:12px; padding:.75rem; }
+.stat .l { font-family:"IBM Plex Mono", monospace; font-size:.625rem; letter-spacing:.12em; text-transform:uppercase; color:var(--subtle); }
+.stat .v { font-family:"IBM Plex Mono", monospace; font-size:1.25rem; margin-top:.2rem; font-variant-numeric:tabular-nums; }
+.stat .h { font-size:.75rem; color:var(--subtle); margin-top:.2rem; }
+.stat.ok .v { color:var(--ok); } .stat.danger .v { color:var(--danger); }
+.seg { display:flex; height:2.75rem; gap:4px; background:var(--surface-2); border-radius:999px; padding:4px; }
+.seg button { flex:1; height:2.25rem; border:0; background:transparent; color:var(--muted); border-radius:999px; font-size:.875rem; font-weight:500; }
+.seg button.on { background:var(--primary); color:var(--primary-fg); }
+label.field { display:block; margin-top:1rem; }
+label.field:first-child { margin-top:0; }
+.field-top { display:flex; justify-content:space-between; font-size:.875rem; margin-bottom:.35rem; }
+.field-top span:last-child { font-family:"IBM Plex Mono", monospace; font-variant-numeric:tabular-nums; }
+input[type=range] { width:100%; height:2.75rem; accent-color:var(--accent); }
+svg.scope { width:100%; height:7rem; background:var(--bg); border-radius:12px; display:block; }
+.hidden { display:none !important; }
+table { width:100%; border-collapse:collapse; font-size:.875rem; }
+th { text-align:left; font-family:"IBM Plex Mono", monospace; font-size:.625rem; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--subtle); font-weight:500; padding-bottom:.75rem; }
+td { padding:.6rem 0; border-top:1px solid var(--border); font-family:"IBM Plex Mono", monospace; font-variant-numeric:tabular-nums; }
+.bars { display:flex; align-items:flex-end; gap:12px; height:11rem; padding-top:8px; }
+.bar-col { flex:1; display:flex; flex-direction:column; align-items:center; gap:6px; height:100%; }
+.bar-pair { flex:1; width:100%; display:flex; align-items:flex-end; gap:4px; }
+.bar { width:50%; border-radius:4px 4px 0 0; min-height:2px; }
+.bar.js { background:var(--warn); } .bar.wasm { background:var(--accent); }
+.bar-col span { font-family:"IBM Plex Mono", monospace; font-size:.75rem; color:var(--subtle); }
+.legend { display:flex; gap:1rem; font-size:.75rem; color:var(--muted); margin-top:.5rem; }
+.sw { display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:6px; }
+.progress { height:6px; background:var(--surface-2); border-radius:999px; overflow:hidden; margin-top:.75rem; }
+.progress > i { display:block; height:100%; background:var(--accent); width:0%; }
+footer { border-top:1px solid var(--border); padding-top:1rem; font-size:.75rem; color:var(--subtle); }
+.chip { height:2.25rem; border:0; border-radius:999px; padding:0 .75rem; font-size:.75rem; font-weight:500;
+  background:var(--surface-2); color:var(--muted); }
+.chip.on { background:var(--primary); color:var(--primary-fg); }
+.err { color:var(--danger); font-size:.875rem; margin-top:.75rem; }
+.head-split { display:flex; flex-direction:column; gap:1rem; }
+@media (min-width:640px) { .head-split { flex-direction:row; justify-content:space-between; align-items:flex-start; } }
+pre.cview { background:var(--bg); border-radius:12px; padding:1rem; overflow:auto; max-height:70vh;
+  font-family:"IBM Plex Mono", ui-monospace, monospace; font-size:12px; line-height:1.45; color:var(--fg); margin:.75rem 0 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <div class="kicker">AudioWorklet lab · C compiled OTA</div>
+      <h1>Core</h1>
+      <p class="lede">A band-limited wavetable written in C. The C is in this file’s source. On Start, <code>wabt</code> is fetched from jsDelivr and assembles it to WASM on the audio thread.</p>
+    </div>
+    <nav class="tabs" aria-label="Lab sections">
+      <button type="button" data-tab="play" class="on">Play</button>
+      <button type="button" data-tab="bench">Bench</button>
+      <button type="button" data-tab="discipline">Discipline</button>
+      <button type="button" data-tab="c">C</button>
+    </nav>
+  </header>
+
+  <section id="tab-play">
+    <div class="card">
+      <div class="head-split">
+        <div>
+          <h2>Band-limited oscillator</h2>
+          <p class="muted">Mipmapped saw / square in an AudioWorklet. C is compiled in-page via wabt (jsDelivr). 5 ms gain ramp, 8 ms pitch ramp.</p>
+        </div>
+        <div class="row">
+          <button class="btn sec" id="hold">2 min</button>
+          <button class="btn" id="toggle">Start</button>
+        </div>
+      </div>
+      <svg class="scope" viewBox="0 0 640 120" aria-hidden="true" style="margin-top:1.1rem">
+        <line x1="0" y1="60" x2="640" y2="60" stroke="#262a31" stroke-width="1"/>
+        <polyline id="poly" points="0,60 640,60" fill="none" stroke="#9eb0c8" stroke-width="1.5" stroke-linejoin="round"/>
+      </svg>
+      <div class="row" style="margin-top:1rem" id="play-badges"></div>
+      <p class="err hidden" id="play-err"></p>
+    </div>
+    <div class="grid2" style="margin-top:.75rem">
+      <div class="card">
+        <div class="kicker">Engine</div>
+        <div class="seg" id="seg-engine" style="margin-top:.75rem">
+          <button type="button" data-v="wasm" class="on">WASM</button>
+          <button type="button" data-v="js">JavaScript</button>
+        </div>
+        <div class="seg" id="seg-wave" style="margin-top:.5rem">
+          <button type="button" data-v="saw" class="on">Saw</button>
+          <button type="button" data-v="square">Square</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="kicker">Voices</div>
+        <div class="seg" id="seg-voices" style="margin-top:.75rem">
+          <button type="button" data-v="1" class="on">1</button>
+          <button type="button" data-v="8">8</button>
+          <button type="button" data-v="16">16</button>
+          <button type="button" data-v="32">32</button>
+        </div>
+        <p class="muted" style="margin-top:.75rem;font-size:.75rem">Extra voices detune around the root. Gain is equal-power scaled.</p>
+      </div>
+    </div>
+    <div class="card" style="margin-top:.75rem">
+      <label class="field">
+        <div class="field-top"><span>Frequency</span><span id="freq-val">220 Hz</span></div>
+        <input id="freq" type="range" min="40" max="1600" step="1" value="220"/>
+      </label>
+      <label class="field">
+        <div class="field-top"><span>Gain</span><span id="gain-val">0.32</span></div>
+        <input id="gain" type="range" min="0" max="0.6" step="0.01" value="0.32"/>
+      </label>
+    </div>
+    <div class="grid4" style="margin-top:.75rem" id="play-stats"></div>
+  </section>
+
+  <section id="tab-bench" class="hidden">
+    <div class="card">
+      <div class="head-split">
+        <div>
+          <h2>JS DSP versus WASM DSP</h2>
+          <p class="muted">Same oscillator loop, two languages. Hypothesis: WASM pulls ahead as voice count rises, but JS stays competitive at one voice because of the boundary call.</p>
+        </div>
+        <div>
+          <div class="row" style="margin-bottom:.5rem">
+            <button class="chip on" data-proto="probe">Probe · 160ms</button>
+            <button class="chip" data-proto="quick">Quick · 280ms</button>
+            <button class="chip" data-proto="full">Full · 500ms</button>
+          </div>
+          <button class="btn" id="run-bench" style="width:100%">Run battery</button>
+        </div>
+      </div>
+      <p class="muted" id="bench-progress" style="font-family:IBM Plex Mono,monospace;font-size:.75rem"></p>
+    </div>
+    <div class="card hidden" id="bench-chart-card" style="margin-top:.75rem">
+      <h2 style="font-size:.875rem">Mean render time (µs)</h2>
+      <div class="bars" id="bars"></div>
+      <div class="legend"><span><i class="sw" style="background:var(--warn)"></i>JS</span><span><i class="sw" style="background:var(--accent)"></i>WASM</span></div>
+    </div>
+    <div class="card hidden" id="bench-table-card" style="margin-top:.75rem; overflow-x:auto">
+      <table>
+        <thead><tr><th>Engine</th><th>Voices</th><th>Median</th><th>Iters</th><th>NaN</th><th>Half?</th></tr></thead>
+        <tbody id="bench-body"></tbody>
+      </table>
+    </div>
+    <div class="card hidden" id="bench-read" style="margin-top:.75rem">
+      <h2 style="font-size:.875rem">Reading</h2>
+      <p class="muted" id="crossover"></p>
+    </div>
+  </section>
+
+  <section id="tab-discipline" class="hidden">
+    <div class="card">
+      <div class="head-split">
+        <div>
+          <h2>Real-time memory discipline</h2>
+          <p class="muted">WASM memory is linked <code>initial = max = 1</code> page (64 KiB). Growth is impossible. <code>process()</code> constructs no arrays. A 32-voice run should report zero NaN/Inf and zero deadline overruns.</p>
+        </div>
+        <div class="row">
+          <button class="btn sec" id="disc-probe">Probe · 20s</button>
+          <button class="btn" id="disc-full">Full · 5 min</button>
+        </div>
+      </div>
+      <div id="disc-prog" class="hidden">
+        <div class="field-top" style="margin-top:1rem"><span id="disc-label" class="muted" style="font-family:IBM Plex Mono,monospace;font-size:.75rem"></span><span id="disc-pct" class="muted" style="font-family:IBM Plex Mono,monospace;font-size:.75rem"></span></div>
+        <div class="progress"><i id="disc-bar"></i></div>
+      </div>
+    </div>
+    <div class="grid4" style="margin-top:.75rem" id="disc-stats"></div>
+    <div class="card" style="margin-top:.75rem">
+      <h2 style="font-size:.875rem">Timing model</h2>
+      <p class="muted">The audio thread wakes once per 128-frame quantum (~2.9 ms at 44.1 kHz). That interval is the deadline. View-source this page for the C. <code>wabt@1.0.36</code> is the over-the-air assembler; <code>render(n)</code> is the only JS↔WASM call per quantum.</p>
+      <div class="row" style="margin-top:1rem">
+        <span class="badge ok">0 alloc in process()</span>
+        <span class="badge ok">memory 1 / 1</span>
+        <span class="badge">C · wabt OTA</span>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-c" class="hidden">
+    <div class="card">
+      <h2>wavetable.c</h2>
+      <p class="muted">Freestanding C, no libc. View-source this page: the oscillator lives in a text/plain script named src-c, which is the string the browser compiles.</p>
+      <pre class="cview" id="c-view"></pre>
+    </div>
+  </section>
+
+  <footer>C in the page source. wabt@1.0.36 from jsDelivr assembles WASM. process() allocates nothing.</footer>
+</div>
+<script type="text/plain" id="src-c">/*
+ * Band-limited mipmapped wavetable oscillator.
+ * Freestanding C → wasm32. No malloc, no libm, no WASI.
+ * Memory is fixed at one 64 KiB page (no grow).
+ *
+ * Visible in the HTML source; compiled in the browser by wabt (jsDelivr).
+ */
+
+#define TABLE 1024
+#define TABLE_MASK 1023
+#define TABLES 6
+#define MAX_VOICES 32
+#define OUT_CAP 256
+#define WAVES 2
+
+#define WAVE_SAW 0
+#define WAVE_SQR 1
+
+#define FLAG_NAN 1
+#define FLAG_INF 2
+
+static float tables[WAVES][TABLES][TABLE];
+static float phase[MAX_VOICES];
+static float freq[MAX_VOICES];
+static float freq_tgt[MAX_VOICES];
+static float gain[MAX_VOICES];
+static float gain_tgt[MAX_VOICES];
+static float out[OUT_CAP];
+
+static unsigned n_voices = 1;
+static unsigned wave = WAVE_SAW;
+static float sr = 48000.0f;
+static float inv_sr = 1.0f / 48000.0f;
+static float gain_ramp = 0.0f;
+static float freq_ramp = 0.0f;
+static unsigned g_nan = 0;
+static unsigned g_inf = 0;
+static unsigned g_ready = 0;
+
+static float sinf_approx(float x)
+{
+    const float pi = 3.14159265358979323846f;
+    const float half_pi = 1.5707963267948966f;
+    const float tau = 6.283185307179586f;
+    float t = x - tau * (float)(int)(x / tau);
+    if (t < 0.0f)
+        t += tau;
+    float sign = 1.0f;
+    if (t > pi) {
+        t -= pi;
+        sign = -1.0f;
+    }
+    if (t > half_pi)
+        t = pi - t;
+    float t2 = t * t;
+    return sign * t *
+           (1.0f +
+            t2 * (-0.166666567f +
+                  t2 * (0.008333026f + t2 * (-0.00019807418f + t2 * 0.0000026019f))));
+}
+
+static int table_index(float f)
+{
+    int t = 0;
+    float edge = 110.0f;
+    while (t < TABLES - 1 && f >= edge) {
+        edge *= 2.0f;
+        t += 1;
+    }
+    return t;
+}
+
+static void build_tables(void)
+{
+    float nyq = sr * 0.5f;
+    for (int w = 0; w < WAVES; w++) {
+        for (int t = 0; t < TABLES; t++) {
+            float f_hi = (t == TABLES - 1) ? nyq : (110.0f * (float)(1 << t));
+            int n_harm = (int)(nyq / f_hi);
+            if (n_harm < 1)
+                n_harm = 1;
+            if (n_harm > 256)
+                n_harm = 256;
+            float peak = 1.0e-12f;
+            for (int i = 0; i < TABLE; i++) {
+                float acc = 0.0f;
+                float pos = (float)i / (float)TABLE;
+                for (int h = 1; h <= n_harm; h++) {
+                    if (w == WAVE_SQR && (h & 1) == 0)
+                        continue;
+                    acc += sinf_approx(6.28318530718f * (float)h * pos) / (float)h;
+                }
+                tables[w][t][i] = acc;
+                float a = acc < 0.0f ? -acc : acc;
+                if (a > peak)
+                    peak = a;
+            }
+            float s = 0.85f / peak;
+            for (int i = 0; i < TABLE; i++)
+                tables[w][t][i] *= s;
+        }
+    }
+}
+
+__attribute__((export_name("init"))) void init(float sample_rate)
+{
+    if (sample_rate < 8000.0f)
+        sample_rate = 48000.0f;
+    sr = sample_rate;
+    inv_sr = 1.0f / sr;
+    gain_ramp = 1.0f / (0.005f * sr);
+    if (gain_ramp > 1.0f)
+        gain_ramp = 1.0f;
+    freq_ramp = 1.0f / (0.008f * sr);
+    if (freq_ramp > 1.0f)
+        freq_ramp = 1.0f;
+    n_voices = 1;
+    wave = WAVE_SAW;
+    g_nan = 0;
+    g_inf = 0;
+    for (int i = 0; i < MAX_VOICES; i++) {
+        phase[i] = 0.0f;
+        freq[i] = 220.0f;
+        freq_tgt[i] = 220.0f;
+        gain[i] = 0.0f;
+        gain_tgt[i] = 0.0f;
+    }
+    build_tables();
+    g_ready = 1;
+}
+
+__attribute__((export_name("set_voices"))) void set_voices(int n)
+{
+    if (n < 1)
+        n = 1;
+    if (n > MAX_VOICES)
+        n = MAX_VOICES;
+    n_voices = (unsigned)n;
+}
+
+__attribute__((export_name("set_wave"))) void set_wave(int w)
+{
+    wave = (w == WAVE_SQR) ? WAVE_SQR : WAVE_SAW;
+}
+
+__attribute__((export_name("set_voice"))) void set_voice(int i, float f, float g)
+{
+    if (i < 0 || i >= MAX_VOICES)
+        return;
+    if (f < 20.0f)
+        f = 20.0f;
+    if (f > 8000.0f)
+        f = 8000.0f;
+    if (g < 0.0f)
+        g = 0.0f;
+    if (g > 1.0f)
+        g = 1.0f;
+    freq_tgt[i] = f;
+    gain_tgt[i] = g;
+}
+
+__attribute__((export_name("note_off_all"))) void note_off_all(void)
+{
+    for (int i = 0; i < MAX_VOICES; i++)
+        gain_tgt[i] = 0.0f;
+}
+
+__attribute__((export_name("out_ptr"))) float *out_ptr(void) { return out; }
+__attribute__((export_name("freq_tgt_ptr"))) float *freq_tgt_ptr(void) { return freq_tgt; }
+__attribute__((export_name("gain_tgt_ptr"))) float *gain_tgt_ptr(void) { return gain_tgt; }
+__attribute__((export_name("nan_count"))) unsigned nan_count(void) { return g_nan; }
+__attribute__((export_name("inf_count"))) unsigned inf_count(void) { return g_inf; }
+__attribute__((export_name("ready"))) unsigned ready(void) { return g_ready; }
+__attribute__((export_name("mem_bytes"))) int mem_bytes(void) { return 65536; }
+__attribute__((export_name("reset_stats"))) void reset_stats(void)
+{
+    g_nan = 0;
+    g_inf = 0;
+}
+
+__attribute__((export_name("render"))) int render(int n)
+{
+    if (n < 1)
+        n = 1;
+    if (n > OUT_CAP)
+        n = OUT_CAP;
+
+    unsigned wv = wave;
+    unsigned nv = n_voices;
+    int flags = 0;
+    float g_ramp = gain_ramp;
+    float f_ramp = freq_ramp;
+    float isr = inv_sr;
+
+    for (int s = 0; s < n; s++) {
+        float mix = 0.0f;
+        for (unsigned v = 0; v < nv; v++) {
+            float fr = freq[v] + (freq_tgt[v] - freq[v]) * f_ramp;
+            freq[v] = fr;
+            float gn = gain[v] + (gain_tgt[v] - gain[v]) * g_ramp;
+            gain[v] = gn;
+            if (gn < 1.0e-6f && gain_tgt[v] < 1.0e-6f)
+                continue;
+
+            float ph = phase[v] + fr * isr;
+            ph -= (float)(int)ph;
+            if (ph < 0.0f)
+                ph += 1.0f;
+            phase[v] = ph;
+
+            int t = table_index(fr);
+            float idx = ph * (float)TABLE;
+            int i0 = (int)idx;
+            float frac = idx - (float)i0;
+            i0 &= TABLE_MASK;
+            int i1 = (i0 + 1) & TABLE_MASK;
+            float a = tables[wv][t][i0];
+            float b = tables[wv][t][i1];
+            mix += (a + (b - a) * frac) * gn;
+        }
+        if (mix > 1.0f)
+            mix = 1.0f;
+        else if (mix < -1.0f)
+            mix = -1.0f;
+        out[s] = mix;
+    }
+
+    for (int s = 0; s < n; s++) {
+        float x = out[s];
+        if (x != x) {
+            g_nan += 1;
+            flags |= FLAG_NAN;
+            out[s] = 0.0f;
+        } else if (x > 1.0e16f || x < -1.0e16f) {
+            g_inf += 1;
+            flags |= FLAG_INF;
+            out[s] = 0.0f;
+        }
+    }
+    return flags;
+}
+
+__attribute__((export_name("voice_gain"))) float voice_gain(int i)
+{
+    if (i < 0 || i >= MAX_VOICES)
+        return 0.0f;
+    return gain[i];
+}
+</script>
+<script>/**
+ * Freestanding C subset → WebAssembly text.
+ * Enough for the wavetable oscillator: statics, arrays, for/while/if,
+ * float/int math, casts, exports. No malloc, no libc.
+ */
+(function (root, factory) {
+  const api = factory();
+  root.compileCToWat = api.compileCToWat;
+  if (typeof module === "object" && module.exports) module.exports = api;
+})(typeof globalThis !== "undefined" ? globalThis : this, function () {
+  const TYPES = new Set(["void", "int", "unsigned", "float", "const", "static"]);
+
+  function stripComments(s) {
+    return s.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+  }
+
+  function preprocess(src) {
+    const macros = [];
+    const lines = stripComments(src).split(/\n/);
+    const out = [];
+    for (const line of lines) {
+      const m = line.match(/^\s*#define\s+([A-Za-z_]\w*)\s+(.*)$/);
+      if (m) {
+        macros.push([m[1], m[2].trim()]);
+        continue;
+      }
+      if (/^\s*#/.test(line)) continue;
+      out.push(line);
+    }
+    macros.sort((a, b) => b[0].length - a[0].length);
+    let text = out.join("\n");
+    for (const [name, value] of macros) {
+      text = text.replace(new RegExp("\\b" + name + "\\b", "g"), value);
+    }
+    return text;
+  }
+
+  function tokenize(src) {
+    const re =
+      /\s+|(__attribute__)|([A-Za-z_]\w*)|(\d+\.\d+([eE][+-]?\d+)?f?|\d+[eE][+-]?\d+f?|\d+f?)|("(?:\\.|[^"])*")|(<<|>>|<=|>=|==|!=|&&|\|\||\+\+|--|\+=|-=|\*=|\/=|&=|\|=)|([()\[\]{};,?:]|[+\-*/%<>=!&|^~])/g;
+    const tokens = [];
+    let m;
+    while ((m = re.exec(src))) {
+      if (m[0].trim() === "") continue;
+      if (m[1]) tokens.push({ k: "kw", v: m[1] });
+      else if (m[2]) tokens.push({ k: TYPES.has(m[2]) || m[2] === "return" || m[2] === "if" || m[2] === "else" || m[2] === "for" || m[2] === "while" || m[2] === "continue" || m[2] === "void" ? "kw" : "id", v: m[2] });
+      else if (m[3]) tokens.push({ k: "num", v: m[3] });
+      else if (m[5]) tokens.push({ k: "str", v: JSON.parse(m[5]) });
+      else if (m[6]) tokens.push({ k: "op", v: m[6] });
+      else if (m[7]) tokens.push({ k: "op", v: m[7] });
+    }
+    tokens.push({ k: "eof", v: "" });
+    return tokens;
+  }
+
+  function compileCToWat(source) {
+    const log = [];
+    const text = preprocess(source);
+    const tok = tokenize(text);
+    let i = 0;
+    const peek = () => tok[i];
+    const at = (v) => peek().v === v;
+    const eat = (v) => {
+      if (v && peek().v !== v) fail("expected " + v + " got " + peek().v);
+      return tok[i++];
+    };
+    const fail = (msg) => {
+      throw new Error("c2wat: " + msg + " at '" + peek().v + "'");
+    };
+
+    const isType = (t) => t && (t.v === "void" || t.v === "int" || t.v === "unsigned" || t.v === "float" || t.v === "const" || t.v === "static");
+
+    function parseType() {
+      let storage = null;
+      while (peek().v === "static" || peek().v === "const") {
+        if (peek().v === "static") storage = "static";
+        eat();
+      }
+      let base = "i32";
+      if (peek().v === "float") {
+        base = "f32";
+        eat();
+      } else if (peek().v === "void") {
+        base = "void";
+        eat();
+      } else if (peek().v === "int" || peek().v === "unsigned") {
+        base = "i32";
+        eat();
+      } else fail("type");
+      let ptr = false;
+      if (at("*")) {
+        eat("*");
+        ptr = true;
+        base = "i32";
+      }
+      return { base: ptr ? "i32" : base, ptr, storage };
+    }
+
+    const globals = Object.create(null);
+    let mem = 16;
+    function align4(n) {
+      return (n + 3) & ~3;
+    }
+    function alloc(bytes) {
+      const a = align4(mem);
+      mem = a + bytes;
+      return a;
+    }
+
+    const funcs = [];
+    const funcMap = Object.create(null);
+
+    function parseExportAttr() {
+      if (peek().v !== "__attribute__") return null;
+      eat();
+      eat("(");
+      eat("(");
+      if (peek().v !== "export_name") fail("export_name");
+      eat();
+      eat("(");
+      const name = eat().v;
+      eat(")");
+      eat(")");
+      eat(")");
+      return name;
+    }
+
+    function parseFile() {
+      while (peek().k !== "eof") {
+        const exp = parseExportAttr();
+        const ty = parseType();
+        const name = eat().v;
+        if (at("(")) {
+          eat("(");
+          const params = [];
+          if (!at(")") && peek().v !== "void") {
+            while (true) {
+              const pt = parseType();
+              let pn = "p" + params.length;
+              if (peek().k === "id") pn = eat().v;
+              params.push({ name: pn, ty: pt.base });
+              if (!at(",")) break;
+              eat(",");
+            }
+          } else if (peek().v === "void") eat();
+          eat(")");
+          const body = parseBlock();
+          const fn = { name, ty: ty.base, params, body, exp: exp || (ty.storage ? null : name) };
+          funcs.push(fn);
+          funcMap[name] = fn;
+        } else {
+          const dims = [];
+          while (at("[")) {
+            eat("[");
+            dims.push(numValue(parseExpr()));
+            eat("]");
+          }
+          let init = null;
+          if (at("=")) {
+            eat("=");
+            init = parseExpr();
+          }
+          eat(";");
+          let count = 1;
+          for (const d of dims) count *= d;
+          const bytes = (ty.base === "f32" ? 4 : 4) * count;
+          const addr = alloc(bytes);
+          globals[name] = { name, ty: ty.base, dims, addr, count, init };
+        }
+      }
+    }
+
+    function parseBlock() {
+      eat("{");
+      const stmts = [];
+      while (!at("}")) stmts.push(parseStmt());
+      eat("}");
+      return { k: "block", stmts };
+    }
+
+    function parseStmt() {
+      if (at("{")) return parseBlock();
+      if (peek().v === "if") {
+        eat();
+        eat("(");
+        const c = parseExpr();
+        eat(")");
+        const a = parseStmt();
+        let b = null;
+        if (peek().v === "else") {
+          eat();
+          b = parseStmt();
+        }
+        return { k: "if", c, a, b };
+      }
+      if (peek().v === "while") {
+        eat();
+        eat("(");
+        const c = parseExpr();
+        eat(")");
+        const body = parseStmt();
+        return { k: "while", c, body };
+      }
+      if (peek().v === "for") {
+        eat();
+        eat("(");
+        let init = null;
+        if (!at(";")) {
+          if (isType(peek())) init = parseDeclStmt();
+          else {
+            init = { k: "expr", e: parseExpr() };
+            eat(";");
+          }
+        } else eat(";");
+        let cond = null;
+        if (!at(";")) cond = parseExpr();
+        eat(";");
+        let inc = null;
+        if (!at(")")) inc = parseExpr();
+        eat(")");
+        const body = parseStmt();
+        return { k: "for", init, cond, inc, body };
+      }
+      if (peek().v === "return") {
+        eat();
+        const e = at(";") ? null : parseExpr();
+        eat(";");
+        return { k: "return", e };
+      }
+      if (peek().v === "continue") {
+        eat();
+        eat(";");
+        return { k: "continue" };
+      }
+      if (isType(peek())) return parseDeclStmt();
+      if (at(";")) {
+        eat(";");
+        return { k: "nop" };
+      }
+      const e = parseExpr();
+      eat(";");
+      return { k: "expr", e };
+    }
+
+    function parseDeclStmt() {
+      const ty = parseType();
+      const name = eat().v;
+      let init = null;
+      if (at("=")) {
+        eat("=");
+        init = parseExpr();
+      }
+      eat(";");
+      return { k: "decl", ty: ty.base, name, init };
+    }
+
+    function parseExpr() {
+      return parseAssign();
+    }
+
+    function parseAssign() {
+      const left = parseTernary();
+      if (["=", "+=", "-=", "*=", "/=", "&=", "|="].includes(peek().v)) {
+        const op = eat().v;
+        const right = parseAssign();
+        return { k: "assign", op, left, right };
+      }
+      return left;
+    }
+
+    function parseTernary() {
+      const c = parseOr();
+      if (at("?")) {
+        eat("?");
+        const a = parseExpr();
+        eat(":");
+        const b = parseTernary();
+        return { k: "tern", c, a, b };
+      }
+      return c;
+    }
+
+    function binLeft(next, ops) {
+      return function () {
+        let left = next();
+        while (ops.includes(peek().v)) {
+          const op = eat().v;
+          const right = next();
+          left = { k: "bin", op, left, right };
+        }
+        return left;
+      };
+    }
+
+    const parseMul = binLeft(parseUnary, ["*", "/", "%"]);
+    const parseAdd = binLeft(parseMul, ["+", "-"]);
+    const parseShift = binLeft(parseAdd, ["<<", ">>"]);
+    const parseRel = binLeft(parseShift, ["<", ">", "<=", ">="]);
+    const parseEq = binLeft(parseRel, ["==", "!="]);
+    const parseBitAnd = binLeft(parseEq, ["&"]);
+    const parseBitXor = binLeft(parseBitAnd, ["^"]);
+    const parseBitOr = binLeft(parseBitXor, ["|"]);
+    const parseAnd = binLeft(parseBitOr, ["&&"]);
+    const parseOr = binLeft(parseAnd, ["||"]);
+
+    function parseUnary() {
+      if (at("++") || at("--")) {
+        const op = eat().v;
+        return { k: "pre", op, e: parseUnary() };
+      }
+      if (at("+") || at("-") || at("!") || at("~")) {
+        const op = eat().v;
+        return { k: "un", op, e: parseUnary() };
+      }
+      if (at("(")) {
+        const save = i;
+        eat("(");
+        if (isType(peek()) && peek().v !== "const" && peek().v !== "static") {
+          const ty = parseType();
+          if (at(")")) {
+            eat(")");
+            return { k: "cast", ty: ty.base, e: parseUnary() };
+          }
+        }
+        i = save;
+      }
+      return parsePost();
+    }
+
+    function parsePost() {
+      let e = parsePrim();
+      for (;;) {
+        if (at("[")) {
+          eat("[");
+          const idx = parseExpr();
+          eat("]");
+          e = { k: "index", e, idx };
+        } else if (at("(")) {
+          eat("(");
+          const args = [];
+          if (!at(")")) {
+            while (true) {
+              args.push(parseExpr());
+              if (!at(",")) break;
+              eat(",");
+            }
+          }
+          eat(")");
+          e = { k: "call", e, args };
+        } else if (at("++") || at("--")) {
+          e = { k: "post", op: eat().v, e };
+        } else break;
+      }
+      return e;
+    }
+
+    function parsePrim() {
+      if (at("(")) {
+        eat("(");
+        const e = parseExpr();
+        eat(")");
+        return e;
+      }
+      if (peek().k === "num") {
+        const v = eat().v;
+        const isF = /[.\eEfF]/.test(v);
+        return { k: "num", v, ty: isF ? "f32" : "i32" };
+      }
+      if (peek().k === "id") return { k: "id", v: eat().v };
+      fail("expr");
+    }
+
+    function numValue(e) {
+      if (e.k === "num") return parseFloat(e.v);
+      if (e.k === "un" && e.op === "-" && e.e.k === "num") return -parseFloat(e.e.v);
+      if (e.k === "bin" && e.op === "-") return numValue(e.left) - numValue(e.right);
+      if (e.k === "bin" && e.op === "+") return numValue(e.left) + numValue(e.right);
+      if (e.k === "bin" && e.op === "*") return numValue(e.left) * numValue(e.right);
+      if (e.k === "bin" && e.op === "/") return numValue(e.left) / numValue(e.right);
+      throw new Error("c2wat: const dim");
+    }
+
+    parseFile();
+    if (mem > 65536) throw new Error("c2wat: statics exceed 64KiB (" + mem + ")");
+
+    let uid = 0;
+    const watFns = [];
+
+    function emitFn(fn) {
+      const locals = Object.create(null);
+      const localList = [];
+      function addLocal(name, ty) {
+        if (locals[name]) return locals[name];
+        const id = name.replace(/[^A-Za-z0-9_]/g, "_") + "_" + uid++;
+        locals[name] = { id, ty };
+        localList.push({ id, ty });
+        return locals[name];
+      }
+      fn.params.forEach((p) => addLocal(p.name, p.ty));
+      let contLabel = null;
+      const lines = [];
+
+      function conv(e, ty) {
+        const v = gen(e);
+        if (v.ty === ty) return v;
+        if (v.ty === "i32" && ty === "f32") {
+          v.code.push("f32.convert_i32_s");
+          v.ty = "f32";
+        } else if (v.ty === "f32" && ty === "i32") {
+          v.code.push("i32.trunc_f32_s");
+          v.ty = "i32";
+        } else if (ty === "void") {
+          v.code.push("drop");
+          v.ty = "void";
+        }
+        return v;
+      }
+
+      function addrOf(e) {
+        if (e.k === "id") {
+          const g = globals[e.v];
+          if (g) return { code: ["i32.const " + g.addr], ty: "i32", g };
+          fail("addr " + e.v);
+        }
+        if (e.k === "index") {
+          let base = e.e;
+          const idxs = [e.idx];
+          while (base.k === "index") {
+            idxs.unshift(base.idx);
+            base = base.e;
+          }
+          if (base.k !== "id" || !globals[base.v]) fail("index base");
+          const g = globals[base.v];
+          const dims = g.dims;
+          const code = ["i32.const 0"];
+          for (let n = 0; n < idxs.length; n++) {
+            let after = 1;
+            for (let k = n + 1; k < dims.length; k++) after *= dims[k];
+            const ix = conv(idxs[n], "i32");
+            code.push(...ix.code);
+            if (after !== 1) code.push("i32.const " + after, "i32.mul");
+            code.push("i32.add");
+          }
+          code.push("i32.const 4", "i32.mul", "i32.const " + g.addr, "i32.add");
+          return { code, ty: "i32", g };
+        }
+        fail("lvalue");
+      }
+
+      function loadSym(name) {
+        if (locals[name]) {
+          return { code: ["local.get $" + locals[name].id], ty: locals[name].ty };
+        }
+        const g = globals[name];
+        if (g) {
+          if (g.dims.length) return { code: ["i32.const " + g.addr], ty: "i32", decay: g };
+          const op = g.ty === "f32" ? "f32.load" : "i32.load";
+          return { code: ["i32.const " + g.addr, op], ty: g.ty };
+        }
+        if (funcMap[name]) return { code: [], ty: "fn", fn: funcMap[name] };
+        fail("unknown " + name);
+      }
+
+      function gen(e) {
+        if (!e) return { code: [], ty: "void" };
+        switch (e.k) {
+          case "num": {
+            if (e.ty === "f32") return { code: ["f32.const " + parseFloat(e.v)], ty: "f32" };
+            return { code: ["i32.const " + (parseInt(e.v, 10) | 0)], ty: "i32" };
+          }
+          case "id":
+            return loadSym(e.v);
+          case "un": {
+            if (e.op === "-") {
+              const v = gen(e.e);
+              if (v.ty === "f32") {
+                v.code.push("f32.neg");
+                return v;
+              }
+              v.code.push("i32.const -1", "i32.mul");
+              return v;
+            }
+            if (e.op === "+") return gen(e.e);
+            if (e.op === "!") {
+              const v = conv(e.e, "i32");
+              v.code.push("i32.eqz");
+              return v;
+            }
+            if (e.op === "~") {
+              const v = conv(e.e, "i32");
+              v.code.push("i32.const -1", "i32.xor");
+              return v;
+            }
+            fail("un " + e.op);
+          }
+          case "cast": {
+            const v = gen(e.e);
+            if (v.ty === e.ty) return v;
+            if (v.ty === "i32" && e.ty === "f32") {
+              v.code.push("f32.convert_i32_s");
+              v.ty = "f32";
+            } else if (v.ty === "f32" && e.ty === "i32") {
+              v.code.push("i32.trunc_f32_s");
+              v.ty = "i32";
+            }
+            return v;
+          }
+          case "bin":
+            return genBin(e);
+          case "tern": {
+            const c = conv(e.c, "i32");
+            const a = gen(e.a);
+            const b = conv(e.b, a.ty);
+            const ty = a.ty;
+            return {
+              code: [
+                ...c.code,
+                "if (result " + ty + ")",
+                ...a.code,
+                "else",
+                ...b.code,
+                "end",
+              ],
+              ty,
+            };
+          }
+          case "index": {
+            const a = addrOf(e);
+            const op = a.g.ty === "f32" ? "f32.load" : "i32.load";
+            return { code: [...a.code, op], ty: a.g.ty };
+          }
+          case "call": {
+            if (e.e.k !== "id") fail("call");
+            const fn = funcMap[e.e.v];
+            if (!fn) fail("call " + e.e.v);
+            const code = [];
+            fn.params.forEach((p, n) => {
+              const a = conv(e.args[n] || { k: "num", v: "0", ty: p.ty }, p.ty);
+              code.push(...a.code);
+            });
+            code.push("call $" + fn.name);
+            return { code, ty: fn.ty };
+          }
+          case "assign":
+            return genAssign(e);
+          case "pre":
+          case "post":
+            return genInc(e);
+          case "raw":
+            return e;
+          default:
+            fail("gen " + e.k);
+        }
+      }
+
+      function genBin(e) {
+        const op = e.op;
+        if (op === "&&" || op === "||") {
+          const a = conv(e.left, "i32");
+          const b = conv(e.right, "i32");
+          a.code.push("i32.const 0", "i32.ne");
+          b.code.push("i32.const 0", "i32.ne");
+          return { code: [...a.code, ...b.code, op === "&&" ? "i32.and" : "i32.or"], ty: "i32" };
+        }
+        let l = gen(e.left);
+        let r = gen(e.right);
+        let ty = l.ty;
+        if (l.ty !== r.ty) {
+          if (l.ty === "i32") {
+            l.code.push("f32.convert_i32_s");
+            l.ty = "f32";
+            ty = "f32";
+          }
+          if (r.ty === "i32") {
+            r.code.push("f32.convert_i32_s");
+            r.ty = "f32";
+            ty = "f32";
+          }
+        }
+        const f = ty === "f32";
+        const map = {
+          "+": f ? "f32.add" : "i32.add",
+          "-": f ? "f32.sub" : "i32.sub",
+          "*": f ? "f32.mul" : "i32.mul",
+          "/": f ? "f32.div" : "i32.div_s",
+          "%": "i32.rem_s",
+          "&": "i32.and",
+          "|": "i32.or",
+          "^": "i32.xor",
+          "<<": "i32.shl",
+          ">>": "i32.shr_s",
+          "<": f ? "f32.lt" : "i32.lt_s",
+          ">": f ? "f32.gt" : "i32.gt_s",
+          "<=": f ? "f32.le" : "i32.le_s",
+          ">=": f ? "f32.ge" : "i32.ge_s",
+          "==": f ? "f32.eq" : "i32.eq",
+          "!=": f ? "f32.ne" : "i32.ne",
+        };
+        const ins = map[op];
+        if (!ins) fail("bin " + op);
+        const outTy = ["<", ">", "<=", ">=", "==", "!="].includes(op) ? "i32" : ty;
+        return { code: [...l.code, ...r.code, ins], ty: outTy };
+      }
+
+      function storeAt(addrCode, ty, val) {
+        const op = ty === "f32" ? "f32.store" : "i32.store";
+        return [...addrCode, ...val.code, op];
+      }
+
+      function genAssign(e) {
+        const rhs = e.op === "=" ? gen(e.right) : genBin({ k: "bin", op: e.op[0], left: e.left, right: e.right });
+        if (e.left.k === "id" && locals[e.left.v]) {
+          const loc = locals[e.left.v];
+          const v = rhs.ty === loc.ty ? rhs : conv(e.op === "=" ? e.right : { k: "raw", code: rhs.code, ty: rhs.ty }, loc.ty);
+          // conv of raw is messy — coerce here
+          const code = rhs.code.slice();
+          if (rhs.ty !== loc.ty) {
+            if (rhs.ty === "i32" && loc.ty === "f32") code.push("f32.convert_i32_s");
+            if (rhs.ty === "f32" && loc.ty === "i32") code.push("i32.trunc_f32_s");
+          }
+          code.push("local.tee $" + loc.id);
+          return { code, ty: loc.ty };
+        }
+        if (e.left.k === "id" && globals[e.left.v] && !globals[e.left.v].dims.length) {
+          const g = globals[e.left.v];
+          const code = rhs.code.slice();
+          if (rhs.ty !== g.ty) {
+            if (rhs.ty === "i32" && g.ty === "f32") code.push("f32.convert_i32_s");
+            if (rhs.ty === "f32" && g.ty === "i32") code.push("i32.trunc_f32_s");
+          }
+          const tmp = addLocal("__t" + uid, g.ty);
+          return {
+            code: [
+              ...code,
+              "local.set $" + tmp.id,
+              "i32.const " + g.addr,
+              "local.get $" + tmp.id,
+              g.ty === "f32" ? "f32.store" : "i32.store",
+              "local.get $" + tmp.id,
+            ],
+            ty: g.ty,
+          };
+        }
+        const a = addrOf(e.left);
+        const tmp = addLocal("__s" + uid, a.g.ty);
+        const code = rhs.code.slice();
+        if (rhs.ty !== a.g.ty) {
+          if (rhs.ty === "i32" && a.g.ty === "f32") code.push("f32.convert_i32_s");
+          if (rhs.ty === "f32" && a.g.ty === "i32") code.push("i32.trunc_f32_s");
+        }
+        return {
+          code: [
+            ...code,
+            "local.set $" + tmp.id,
+            ...a.code,
+            "local.get $" + tmp.id,
+            a.g.ty === "f32" ? "f32.store" : "i32.store",
+            "local.get $" + tmp.id,
+          ],
+          ty: a.g.ty,
+        };
+      }
+
+      function genInc(e) {
+        const one = { k: "num", v: "1", ty: "i32" };
+        const op = e.op === "++" ? "+" : "-";
+        if (e.k === "pre") return genAssign({ k: "assign", op: op + "=", left: e.e, right: one });
+        const cur = gen(e.e);
+        const as = genAssign({ k: "assign", op: op + "=", left: e.e, right: one });
+        // value is old; we already stored new. Recompute old = new - 1
+        const ty = cur.ty;
+        if (ty === "f32") {
+          as.code.push("f32.const 1", e.op === "++" ? "f32.sub" : "f32.add");
+        } else {
+          as.code.push("i32.const 1", e.op === "++" ? "i32.sub" : "i32.add");
+        }
+        return { code: as.code, ty };
+      }
+
+      function emitStmt(s) {
+        if (!s || s.k === "nop") return;
+        if (s.k === "block") {
+          s.stmts.forEach(emitStmt);
+          return;
+        }
+        if (s.k === "decl") {
+          const loc = addLocal(s.name, s.ty);
+          if (s.init) {
+            const v = gen(s.init);
+            const code = v.code.slice();
+            if (v.ty !== s.ty) {
+              if (v.ty === "i32" && s.ty === "f32") code.push("f32.convert_i32_s");
+              if (v.ty === "f32" && s.ty === "i32") code.push("i32.trunc_f32_s");
+            }
+            lines.push(...code, "local.set $" + loc.id);
+          }
+          return;
+        }
+        if (s.k === "expr") {
+          const v = gen(s.e);
+          if (v.ty !== "void" && v.code.length) {
+            lines.push(...v.code, "drop");
+          } else lines.push(...v.code);
+          return;
+        }
+        if (s.k === "return") {
+          if (s.e) {
+            const v = gen(s.e);
+            const code = v.code.slice();
+            if (fn.ty !== "void" && v.ty !== fn.ty) {
+              if (v.ty === "i32" && fn.ty === "f32") code.push("f32.convert_i32_s");
+              if (v.ty === "f32" && fn.ty === "i32") code.push("i32.trunc_f32_s");
+            }
+            // array decay already i32
+            lines.push(...code, "return");
+          } else lines.push("return");
+          return;
+        }
+        if (s.k === "continue") {
+          if (!contLabel) fail("continue");
+          lines.push("br $" + contLabel);
+          return;
+        }
+        if (s.k === "if") {
+          const c = conv(s.c, "i32");
+          lines.push(...c.code, "if");
+          emitStmt(s.a);
+          if (s.b) {
+            lines.push("else");
+            emitStmt(s.b);
+          }
+          lines.push("end");
+          return;
+        }
+        if (s.k === "while") {
+          const prev = contLabel;
+          const L = "w" + uid++;
+          contLabel = L + "c";
+          lines.push("block $" + L + "e", "loop $" + L);
+          const c = conv(s.c, "i32");
+          lines.push(...c.code, "i32.eqz", "br_if $" + L + "e");
+          lines.push("block $" + contLabel);
+          emitStmt(s.body);
+          lines.push("end", "br $" + L, "end", "end");
+          contLabel = prev;
+          return;
+        }
+        if (s.k === "for") {
+          const prev = contLabel;
+          const L = "f" + uid++;
+          contLabel = L + "c";
+          if (s.init) emitStmt(s.init);
+          lines.push("block $" + L + "e", "loop $" + L);
+          if (s.cond) {
+            const c = conv(s.cond, "i32");
+            lines.push(...c.code, "i32.eqz", "br_if $" + L + "e");
+          }
+          lines.push("block $" + contLabel);
+          emitStmt(s.body);
+          lines.push("end");
+          if (s.inc) {
+            const v = gen(s.inc);
+            if (v.ty !== "void") lines.push(...v.code, "drop");
+            else lines.push(...v.code);
+          }
+          lines.push("br $" + L, "end", "end");
+          contLabel = prev;
+          return;
+        }
+        fail("stmt " + s.k);
+      }
+
+      // rebind gen after genCast - the double gen is messy. Flatten:
+      // I'll leave the inner override.
+
+      emitStmt(fn.body);
+      if (fn.ty !== "void") lines.push("unreachable");
+
+      const locDecl = localList
+        .filter((l) => !fn.params.some((p) => locals[p.name] && locals[p.name].id === l.id))
+        .map((l) => "    (local $" + l.id + " " + l.ty + ")")
+        .join("\n");
+      const params = fn.params.map((p) => "(param $" + locals[p.name].id + " " + p.ty + ")").join(" ");
+      const result = fn.ty === "void" ? "" : "(result " + fn.ty + ")";
+      const exp = fn.exp ? " (export \"" + fn.exp + "\")" : "";
+      watFns.push(
+        "  (func $" +
+          fn.name +
+          exp +
+          " " +
+          params +
+          " " +
+          result +
+          "\n" +
+          (locDecl ? locDecl + "\n" : "") +
+          lines.map((x) => "    " + x).join("\n") +
+          "\n  )"
+      );
+    }
+
+    // emitFn holds a single gen().
+
+    funcs.forEach(emitFn);
+
+    const inits = [];
+    for (const g of Object.values(globals)) {
+      if (g.init && g.init.k === "num") {
+        const v = parseFloat(g.init.v);
+        if (g.ty === "f32") inits.push("    i32.const " + g.addr, "    f32.const " + v, "    f32.store");
+        else inits.push("    i32.const " + g.addr, "    i32.const " + (v | 0), "    i32.store");
+      }
+    }
+
+    const wat = [
+      "(module",
+      "  (memory (export \"memory\") 1 1)",
+      inits.length
+        ? "  (func $__init_statics\n" + inits.join("\n") + "\n  )\n  (start $__init_statics)"
+        : "",
+      watFns.join("\n"),
+      ")",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    log.push("statics " + mem + " bytes");
+    log.push("funcs " + funcs.length);
+    return { wat, log, mem };
+  }
+
+  return { compileCToWat };
+});
+</script>
+<script>
+const WORKLET_SRC = "/**\n * WavetableProcessor\n *\n * Two render paths share the same band-limited mipmapped wavetable:\n *   - WASM: rustc --target wasm32-unknown-unknown, memory 1/1 page\n *   - JS:   identical loop over preallocated tables\n *\n * process() contract:\n *   no new arrays, objects, strings, or WASM calls other than render()\n *   views bound once after instantiate; memory cannot grow (max 1 page)\n */\n\nconst TABLE = 1024;\nconst TABLE_MASK = 1023;\nconst TABLES = 6;\nconst MAX_VOICES = 32;\nconst OUT_CAP = 256;\nconst BINS = 256;\nconst POST_EVERY = 32;\n\nfunction nowMs() {\n  const p = globalThis.performance;\n  if (p && typeof p.now === \"function\") return p.now();\n  return Date.now();\n}\n\nfunction tableIndex(freq) {\n  let t = 0;\n  let edge = 110;\n  while (t + 1 < TABLES && freq >= edge) {\n    edge *= 2;\n    t++;\n  }\n  return t;\n}\n\nfunction harmonicsForTable(t, sr) {\n  const nyq = sr * 0.5;\n  const fHi = t + 1 === TABLES ? nyq : 110 * (1 << t);\n  const n = (nyq / fHi) | 0;\n  return n < 1 ? 1 : n > 512 ? 512 : n;\n}\n\nfunction buildTables(sr) {\n  const tables = [\n    [new Float32Array(TABLE), new Float32Array(TABLE), new Float32Array(TABLE), new Float32Array(TABLE), new Float32Array(TABLE), new Float32Array(TABLE)],\n    [new Float32Array(TABLE), new Float32Array(TABLE), new Float32Array(TABLE), new Float32Array(TABLE), new Float32Array(TABLE), new Float32Array(TABLE)],\n  ];\n  for (let wave = 0; wave < 2; wave++) {\n    for (let t = 0; t < TABLES; t++) {\n      const nHarm = harmonicsForTable(t, sr);\n      const buf = tables[wave][t];\n      let peak = 1e-12;\n      for (let i = 0; i < TABLE; i++) {\n        const phase = i / TABLE;\n        let acc = 0;\n        for (let h = 1; h <= nHarm; h++) {\n          if (wave === 1 && (h & 1) === 0) continue;\n          acc += Math.sin(Math.PI * 2 * h * phase) / h;\n        }\n        buf[i] = acc;\n        const a = acc < 0 ? -acc : acc;\n        if (a > peak) peak = a;\n      }\n      const scale = 0.85 / peak;\n      for (let i = 0; i < TABLE; i++) buf[i] *= scale;\n    }\n  }\n  return tables;\n}\n\nclass WavetableProcessor extends AudioWorkletProcessor {\n  static get parameterDescriptors() {\n    return [\n      { name: \"frequency\", defaultValue: 220, minValue: 20, maxValue: 8000, automationRate: \"k-rate\" },\n      { name: \"gain\", defaultValue: 0, minValue: 0, maxValue: 1, automationRate: \"k-rate\" },\n    ];\n  }\n\n  constructor() {\n    super();\n    this.tables = buildTables(sampleRate);\n    this.invSr = 1 / sampleRate;\n    this.gainRamp = 1 - Math.exp(-1 / (0.005 * sampleRate));\n    this.freqRamp = 1 - Math.exp(-1 / (0.008 * sampleRate));\n\n    this.jsPhase = new Float32Array(MAX_VOICES);\n    this.jsFreq = new Float32Array(MAX_VOICES);\n    this.jsFreqTgt = new Float32Array(MAX_VOICES);\n    this.jsGain = new Float32Array(MAX_VOICES);\n    this.jsGainTgt = new Float32Array(MAX_VOICES);\n    this.jsOut = new Float32Array(OUT_CAP);\n    for (let i = 0; i < MAX_VOICES; i++) this.jsFreq[i] = this.jsFreqTgt[i] = 220;\n\n    this.nVoices = 1;\n    this.wave = 0;\n    this.engine = 1;\n    this.live = 1;\n    this.detune = 0.004;\n\n    this.wasm = null;\n    this.outView = null;\n    this.freqTgtView = null;\n    this.gainTgtView = null;\n    this.initialPages = 0;\n    this.pages = 0;\n    this.grew = 0;\n    this.nan = 0;\n    this.inf = 0;\n\n    this.bins = new Uint32Array(BINS);\n    this.binCount = 0;\n    this.maxUs = 0;\n    this.lastUs = 0;\n    this.overruns = 0;\n    this.quanta = 0;\n    this.sincePost = 0;\n    this.ready = 0;\n    this.hasHiRes = !!(globalThis.performance && typeof globalThis.performance.now === \"function\");\n\n    this.port.onmessage = (ev) => this.onMsg(ev.data);\n  }\n\n  onMsg(data) {\n    if (!data) return;\n    const type = data.type;\n    if (type === \"wasm\") {\n      this.bootWasm(data.module, data.bytes);\n      return;\n    }\n    if (type === \"engine\") {\n      this.engine = data.engine === \"js\" ? 0 : 1;\n      return;\n    }\n    if (type === \"wave\") {\n      this.wave = data.wave === \"square\" ? 1 : 0;\n      if (this.wasm) this.wasm.set_wave(this.wave);\n      return;\n    }\n    if (type === \"voices\") {\n      const n = data.n | 0;\n      this.nVoices = n < 1 ? 1 : n > MAX_VOICES ? MAX_VOICES : n;\n      if (this.wasm) this.wasm.set_voices(this.nVoices);\n      return;\n    }\n    if (type === \"live\") {\n      this.live = data.on ? 1 : 0;\n      return;\n    }\n    if (type === \"detune\") {\n      this.detune = +data.value || 0;\n      return;\n    }\n    if (type === \"set_voices_abs\") {\n      const packed = data.packed;\n      const n = packed[0] | 0;\n      this.nVoices = n < 1 ? 1 : n > MAX_VOICES ? MAX_VOICES : n;\n      this.live = 0;\n      if (this.wasm) this.wasm.set_voices(this.nVoices);\n      for (let i = 0; i < this.nVoices; i++) {\n        const f = packed[1 + i * 2];\n        const g = packed[2 + i * 2];\n        this.jsFreqTgt[i] = f;\n        this.jsGainTgt[i] = g;\n        if (this.freqTgtView) {\n          this.freqTgtView[i] = f;\n          this.gainTgtView[i] = g;\n        } else if (this.wasm) {\n          this.wasm.set_voice(i, f, g);\n        }\n      }\n      return;\n    }\n    if (type === \"note_off\") {\n      for (let i = 0; i < MAX_VOICES; i++) this.jsGainTgt[i] = 0;\n      if (this.wasm) this.wasm.note_off_all();\n      return;\n    }\n    if (type === \"reset\") {\n      this.bins.fill(0);\n      this.binCount = 0;\n      this.maxUs = 0;\n      this.lastUs = 0;\n      this.overruns = 0;\n      this.quanta = 0;\n      this.nan = 0;\n      this.inf = 0;\n      if (this.wasm) this.wasm.reset_stats();\n      return;\n    }\n    if (type === \"measure\") {\n      this.runMeasure(data.ms | 0, data.frames | 0);\n    }\n  }\n\n  async bootWasm(module, bytes) {\n    try {\n      let instance;\n      if (module) {\n        instance = await WebAssembly.instantiate(module);\n      } else {\n        const result = await WebAssembly.instantiate(bytes);\n        instance = result.instance;\n      }\n      const exp = instance.exports;\n      exp.init(sampleRate);\n      const mem = exp.memory;\n      this.initialPages = mem.buffer.byteLength >>> 16;\n      this.pages = this.initialPages;\n      this.outView = new Float32Array(mem.buffer, exp.out_ptr() >>> 0, OUT_CAP);\n      this.freqTgtView = new Float32Array(mem.buffer, exp.freq_tgt_ptr() >>> 0, MAX_VOICES);\n      this.gainTgtView = new Float32Array(mem.buffer, exp.gain_tgt_ptr() >>> 0, MAX_VOICES);\n      exp.set_voices(this.nVoices);\n      exp.set_wave(this.wave);\n      this.wasm = exp;\n      this.ready = 1;\n      this.port.postMessage({ type: \"ready\", pages: this.pages, hiRes: this.hasHiRes ? 1 : 0 });\n    } catch (err) {\n      this.port.postMessage({ type: \"error\", message: String(err && err.message ? err.message : err) });\n    }\n  }\n\n  dsp(n) {\n    const useWasm = this.engine === 1 && this.wasm && this.outView;\n    if (useWasm) this.wasm.render(n);\n    else this.jsRender(n);\n    return useWasm;\n  }\n\n  runMeasure(ms, frames) {\n    const n = frames > 0 && frames <= OUT_CAP ? frames : 128;\n    ms = ms > 0 ? ms : 180;\n    try {\n      for (let i = 0; i < 800; i++) this.dsp(n);\n      const t0 = nowMs();\n      let iters = 0;\n      while (nowMs() - t0 < ms) {\n        this.dsp(n);\n        iters++;\n      }\n      const dt = nowMs() - t0;\n      const meanUs = iters > 0 ? (dt * 1000) / iters : 0;\n      this.lastUs = meanUs;\n      this.maxUs = meanUs;\n      this.bins.fill(0);\n      let bin = meanUs | 0;\n      if (bin < 0) bin = 0;\n      if (bin >= BINS) bin = BINS - 1;\n      this.bins[bin] = iters;\n      this.binCount = iters;\n      this.port.postMessage({\n        type: \"measure\",\n        engine: this.engine === 1 ? \"wasm\" : \"js\",\n        voices: this.nVoices,\n        iters,\n        dtMs: dt,\n        meanUs,\n        medianUs: meanUs,\n        p99Us: meanUs,\n        maxUs: meanUs,\n        nan: this.wasm ? this.wasm.nan_count() : this.nan,\n        inf: this.wasm ? this.wasm.inf_count() : this.inf,\n        pages: this.wasm ? this.wasm.memory.buffer.byteLength >>> 16 : this.pages,\n        hiRes: this.hasHiRes ? 1 : 0,\n        budgetUs: n * this.invSr * 1e6,\n      });\n    } catch (err) {\n      this.port.postMessage({ type: \"error\", message: String(err && err.message ? err.message : err) });\n    }\n  }\n\n  jsRender(n) {\n    const out = this.jsOut;\n    for (let i = 0; i < n; i++) out[i] = 0;\n    const voices = this.nVoices;\n    const tables = this.tables[this.wave];\n    const invSr = this.invSr;\n    const gRamp = this.gainRamp;\n    const fRamp = this.freqRamp;\n    const phase = this.jsPhase;\n    const freqA = this.jsFreq;\n    const freqT = this.jsFreqTgt;\n    const gainA = this.jsGain;\n    const gainT = this.jsGainTgt;\n\n    for (let v = 0; v < voices; v++) {\n      let freq = freqA[v] + (freqT[v] - freqA[v]) * fRamp;\n      if (freq > freqT[v] - 0.001 && freq < freqT[v] + 0.001) freq = freqT[v];\n      freqA[v] = freq;\n\n      let gain = gainA[v] + (gainT[v] - gainA[v]) * gRamp;\n      const dg = gain - gainT[v];\n      if (dg > -1e-6 && dg < 1e-6) gain = gainT[v];\n      gainA[v] = gain;\n\n      if (gain <= 1e-8) {\n        let ph = phase[v] + freq * invSr * n;\n        if (ph >= 1) ph -= ph | 0;\n        if (ph < 0) ph = 0;\n        phase[v] = ph;\n        continue;\n      }\n\n      const table = tables[tableIndex(freq)];\n      const inc = freq * invSr;\n      let ph = phase[v];\n      for (let i = 0; i < n; i++) {\n        const x = ph * TABLE;\n        const i0 = x & TABLE_MASK;\n        const frac = x - (x | 0);\n        out[i] += (table[i0] * (1 - frac) + table[(i0 + 1) & TABLE_MASK] * frac) * gain;\n        ph += inc;\n        if (ph >= 1) ph -= 1;\n      }\n      phase[v] = ph;\n    }\n\n    for (let i = 0; i < n; i++) {\n      const x = out[i];\n      if (x === x && x !== Infinity && x !== -Infinity) continue;\n      if (x !== x) this.nan++;\n      else this.inf++;\n      out[i] = 0;\n    }\n  }\n\n  applyLiveParams(frequency, gain) {\n    const n = this.nVoices;\n    const det = this.detune;\n    const mid = (n - 1) * 0.5;\n    const g = gain * (n > 1 ? 1 / Math.sqrt(n) : 1);\n    for (let i = 0; i < n; i++) {\n      const f = frequency * (1 + (i - mid) * det);\n      this.jsFreqTgt[i] = f;\n      this.jsGainTgt[i] = g;\n      if (this.freqTgtView) {\n        this.freqTgtView[i] = f;\n        this.gainTgtView[i] = g;\n      }\n    }\n  }\n\n  record(us, n) {\n    this.quanta++;\n    this.lastUs = us;\n    if (us > this.maxUs) this.maxUs = us;\n    const budget = n * this.invSr * 1e6;\n    if (us > budget * 0.5) this.overruns++;\n    let bin = us | 0;\n    if (bin < 0) bin = 0;\n    if (bin >= BINS) bin = BINS - 1;\n    this.bins[bin]++;\n    this.binCount++;\n  }\n\n  percentile(p) {\n    const need = this.binCount * p;\n    let acc = 0;\n    for (let i = 0; i < BINS; i++) {\n      acc += this.bins[i];\n      if (acc >= need) return i;\n    }\n    return this.maxUs;\n  }\n\n  postStats(n) {\n    if (this.wasm) {\n      this.nan = this.wasm.nan_count();\n      this.inf = this.wasm.inf_count();\n      this.pages = this.wasm.memory.buffer.byteLength >>> 16;\n      if (this.pages !== this.initialPages) this.grew = 1;\n    }\n    this.port.postMessage({\n      type: \"stats\",\n      quanta: this.quanta,\n      medianUs: this.percentile(0.5),\n      p99Us: this.percentile(0.99),\n      maxUs: this.maxUs,\n      overruns: this.overruns,\n      nan: this.nan,\n      inf: this.inf,\n      pages: this.pages || this.initialPages,\n      grew: this.grew,\n      engine: this.engine,\n      voices: this.nVoices,\n      lastUs: this.lastUs,\n      alloc: 0,\n      budgetUs: n * this.invSr * 1e6,\n      ready: this.ready,\n    });\n  }\n\n  process(_inputs, outputs, parameters) {\n    try {\n      const out = outputs[0] && outputs[0][0];\n      if (!out) return true;\n      const n = out.length > OUT_CAP ? OUT_CAP : out.length;\n      const freq = parameters.frequency[0];\n      const gain = parameters.gain[0];\n\n      if (this.live) this.applyLiveParams(freq, gain);\n\n      const t0 = nowMs();\n      const useWasm = this.dsp(n);\n      const us = (nowMs() - t0) * 1000;\n      this.record(us, n);\n\n      const src = useWasm ? this.outView : this.jsOut;\n      for (let i = 0; i < n; i++) out[i] = src[i];\n\n      this.sincePost++;\n      if (this.quanta === 1 || this.sincePost >= POST_EVERY) {\n        this.sincePost = 0;\n        this.postStats(n);\n      }\n    } catch (err) {\n      this.port.postMessage({\n        type: \"error\",\n        message: String(err && err.message ? err.message : err),\n      });\n    }\n    return true;\n  }\n}\n\nregisterProcessor(\"wavetable-processor\", WavetableProcessor);\n";
+const WABT_URL = "https://cdn.jsdelivr.net/npm/wabt@1.0.36/index.js";
+function voiceChord(n) {
+  const packed = new Float32Array(1 + n * 2);
+  packed[0] = n;
+  const g = 0.22 / Math.sqrt(n);
+  for (let i = 0; i < n; i++) {
+    packed[1 + i * 2] = 110 * Math.pow(2, (i % 24) / 12);
+    packed[2 + i * 2] = g;
+  }
+  return packed;
+}
+function fmtUs(n) { return !n ? "<1 µs" : n < 10 ? n.toFixed(1) + " µs" : Math.round(n) + " µs"; }
+function fmtTime(n) { n = n | 0; const m = (n / 60) | 0, r = n % 60; return m + ":" + (r < 10 ? "0" : "") + r; }
+function wait(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+const S = {
+  ready: false, error: null, playing: false, engine: "wasm", wave: "saw",
+  freq: 220, gain: 0.32, voices: 1, memPages: 1, memGrew: false,
+  quanta: 0, medianUs: 0, p99Us: 0, maxUs: 0, overruns: 0, nan: 0, inf: 0,
+  allocFlag: 0, budgetUs: 2666.7, playSeconds: 0,
+  hold: { target: null, done: false, nan: 0, overruns: 0 },
+  bench: { running: false, protocol: "probe", progress: "", rows: [], crossover: "" },
+  disc: { running: false, seconds: 300, elapsed: 0, startPages: 1, pages: 1, grew: false, nan: 0, inf: 0, overruns: 0, alloc: 0, quanta: 0, done: false },
+  compile: { status: "idle", wasmBytes: 0, ms: 0, log: "" },
+};
+
+let ctx, node, analyser, scopeBuf, freqP, gainP, playOrigin = 0, raf = 0;
+let measureWait = null, benchCancel = false, discCancel = false, wasmBytes = null, wabtApi = null;
+
+async function loadWabt() {
+  if (wabtApi) return wabtApi;
+  S.compile.status = "Fetching wabt@1.0.36…";
+  paintPlay();
+  if (typeof WabtModule !== "function") {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = WABT_URL;
+      s.onload = resolve;
+      s.onerror = () => {
+        const s2 = document.createElement("script");
+        s2.src = "/vendor/wabt.js";
+        s2.onload = resolve;
+        s2.onerror = () => reject(new Error("Failed to load wabt (jsDelivr and local)"));
+        document.head.appendChild(s2);
+      };
+      document.head.appendChild(s);
+    });
+  }
+  wabtApi = await WabtModule();
+  return wabtApi;
+}
+
+async function compileC() {
+  if (wasmBytes) return wasmBytes;
+  try {
+    const src = document.getElementById("src-c").textContent;
+    const wabt = await loadWabt();
+    S.compile.status = "Parsing wavetable.c";
+    paintPlay();
+    const t0 = performance.now();
+    const { wat, log, mem } = compileCToWat(src);
+    S.compile.status = "Assembling WASM";
+    paintPlay();
+    const parsed = wabt.parseWat("wavetable.wat", wat);
+    const bin = parsed.toBinary({ write_debug_names: false });
+    parsed.destroy();
+    wasmBytes = bin.buffer;
+    S.compile = {
+      status: "ready",
+      wasmBytes: wasmBytes.byteLength,
+      watBytes: wat.length,
+      ms: Math.round(performance.now() - t0),
+      mem,
+      log: (log || []).join(" · "),
+    };
+    paintPlay();
+    return wasmBytes;
+  } catch (err) {
+    S.compile.status = "failed";
+    S.error = String(err && err.message ? err.message : err);
+    paintPlay();
+    throw err;
+  }
+}
+
+function onMsg(data) {
+  if (!data || typeof data !== "object") return;
+  if (data.type === "stats") {
+    S.memPages = data.pages || S.memPages;
+    S.memGrew = !!data.grew || S.memGrew;
+    S.quanta = data.quanta || 0;
+    S.medianUs = data.medianUs || 0;
+    S.p99Us = data.p99Us || 0;
+    S.maxUs = data.maxUs || 0;
+    S.overruns = data.overruns || 0;
+    S.nan = data.nan || 0;
+    S.inf = data.inf || 0;
+    S.budgetUs = data.budgetUs || S.budgetUs;
+    S.ready = !!data.ready || S.ready;
+    if (S.playing && ctx) S.playSeconds = Math.max(0, ctx.currentTime - playOrigin);
+    paintPlay();
+    return;
+  }
+  if (data.type === "ready") { S.ready = true; S.error = null; S.memPages = data.pages || 1; paintPlay(); return; }
+  if (data.type === "error") { S.error = data.message || "Worklet error"; paintPlay(); if (measureWait) { measureWait.reject(new Error(S.error)); measureWait = null; } return; }
+  if (data.type === "measure") {
+    const row = {
+      engine: data.engine, voices: data.voices, quanta: data.iters || 0,
+      medianUs: data.medianUs || data.meanUs || 0, p99Us: data.p99Us || data.meanUs || 0,
+      maxUs: data.maxUs || 0, overruns: 0, nan: data.nan || 0, inf: data.inf || 0,
+      budgetUs: data.budgetUs || S.budgetUs,
+    };
+    row.underHalf = row.p99Us < row.budgetUs * 0.5;
+    if (measureWait) { measureWait.resolve(row); measureWait = null; }
+  }
+}
+
+async function boot() {
+  if (node && ctx && ctx.state !== "closed") {
+    if (ctx.state === "suspended") await ctx.resume();
+    return;
+  }
+  ctx = ctx || new AudioContext();
+  if (ctx.state === "suspended") await ctx.resume();
+  const blob = new Blob([WORKLET_SRC], { type: "application/javascript" });
+  const url = URL.createObjectURL(blob);
+  await ctx.audioWorklet.addModule(url);
+  node = new AudioWorkletNode(ctx, "wavetable-processor", {
+    numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1],
+    parameterData: { frequency: S.freq, gain: 0 },
+  });
+  node.port.onmessage = (ev) => onMsg(ev.data);
+  const g = ctx.createGain(); g.gain.value = 0.9;
+  analyser = ctx.createAnalyser(); analyser.fftSize = 1024; analyser.smoothingTimeConstant = 0.5;
+  node.connect(g); g.connect(analyser); analyser.connect(ctx.destination);
+  scopeBuf = new Uint8Array(analyser.fftSize);
+  freqP = node.parameters.get("frequency");
+  gainP = node.parameters.get("gain");
+  try {
+    node.port.postMessage({ type: "wasm", bytes: await compileC() });
+  } catch (err) {
+    S.error = String(err && err.message ? err.message : err);
+    paintPlay();
+  }
+  node.port.postMessage({ type: "engine", engine: S.engine });
+  node.port.postMessage({ type: "wave", wave: S.wave });
+  node.port.postMessage({ type: "voices", n: S.voices });
+  node.port.postMessage({ type: "live", on: true });
+  const t0 = Date.now();
+  while (!S.ready && Date.now() - t0 < 8000) await wait(40);
+}
+
+async function start() {
+  if (!ctx) { ctx = new AudioContext(); void ctx.resume(); }
+  else if (ctx.state === "suspended") void ctx.resume();
+  await boot();
+  node.port.postMessage({ type: "live", on: true });
+  node.port.postMessage({ type: "reset" });
+  const t = ctx.currentTime;
+  freqP.setTargetAtTime(S.freq, t, 0.008);
+  gainP.setTargetAtTime(S.gain, t, 0.005);
+  playOrigin = t;
+  S.playing = true; S.playSeconds = 0; S.error = null;
+  if (S.hold.target) S.hold.done = false;
+  paintPlay();
+  tick();
+}
+
+function stop() {
+  if (gainP && ctx) gainP.setTargetAtTime(0, ctx.currentTime, 0.008);
+  node && node.port.postMessage({ type: "note_off" });
+  S.playing = false;
+  paintPlay();
+  if (raf) cancelAnimationFrame(raf);
+  raf = 0;
+}
+
+function tick() {
+  if (!S.playing || !ctx) return;
+  S.playSeconds = Math.max(0, ctx.currentTime - playOrigin);
+  if (S.hold.target && S.playSeconds >= S.hold.target) {
+    S.hold.done = true; S.hold.nan = S.nan; S.hold.overruns = S.overruns;
+    stop(); return;
+  }
+  if (analyser && scopeBuf) {
+    analyser.getByteTimeDomainData(scopeBuf);
+    const N = 160, step = Math.max(1, (scopeBuf.length / N) | 0);
+    let pts = "";
+    for (let i = 0; i < N; i++) {
+      const raw = scopeBuf[i * step] ?? 128;
+      const v = Math.max(0, Math.min(255, 128 + (raw - 128) * 1.8));
+      pts += (i ? " " : "") + ((i / (N - 1)) * 640).toFixed(1) + "," + ((v / 255) * 120).toFixed(1);
+    }
+    document.getElementById("poly").setAttribute("points", pts);
+  }
+  paintPlay();
+  raf = requestAnimationFrame(tick);
+}
+
+function setEngine(k) { S.engine = k; node && node.port.postMessage({ type: "engine", engine: k }); paintPlay(); }
+function setWave(w) { S.wave = w; node && node.port.postMessage({ type: "wave", wave: w }); paintPlay(); }
+function setVoices(n) { S.voices = n; node && node.port.postMessage({ type: "voices", n }); paintPlay(); }
+
+function paintPlay() {
+  document.getElementById("toggle").textContent = S.playing ? "Stop" : "Start";
+  const badges = [];
+  if (S.compile.status === "ready") {
+    badges.push('<span class="badge ok">C → WASM ' + S.compile.wasmBytes + " B · " + S.compile.ms + " ms</span>");
+  } else if (S.compile.status && S.compile.status !== "idle") {
+    badges.push('<span class="badge accent">' + S.compile.status + "</span>");
+  } else {
+    badges.push('<span class="badge">C in source · wabt OTA</span>');
+  }
+  badges.push('<span class="badge ' + (S.ready ? "ok" : "") + '">' + (S.ready ? "WASM ready · 1 page" : S.error ? "WASM error" : "tap Start to compile") + "</span>");
+  badges.push('<span class="badge ' + (S.engine === "wasm" ? "accent" : "") + '">' + (S.engine === "wasm" ? "WASM path" : "JS path") + "</span>");
+  badges.push('<span class="badge">' + (S.wave === "saw" ? "Saw" : "Square") + "</span>");
+  if (S.playing) badges.push('<span class="badge ok">' + fmtTime(S.playSeconds) + (S.hold.target ? " / " + fmtTime(S.hold.target) : "") + "</span>");
+  if (S.hold.done) badges.push('<span class="badge ' + (S.hold.nan || S.hold.overruns ? "danger" : "ok") + '">2 min held · NaN ' + S.hold.nan + " · over " + S.hold.overruns + "</span>");
+  document.getElementById("play-badges").innerHTML = badges.join("");
+  const err = document.getElementById("play-err");
+  err.textContent = S.error || "";
+  err.classList.toggle("hidden", !S.error);
+  document.getElementById("freq-val").textContent = Math.round(S.freq) + " Hz";
+  document.getElementById("gain-val").textContent = S.gain.toFixed(2);
+  document.getElementById("play-stats").innerHTML = [
+    stat("Median", fmtUs(S.medianUs), "per 128-frame quantum"),
+    stat("p99", fmtUs(S.p99Us), "budget " + fmtUs(S.budgetUs)),
+    stat("Overruns", S.overruns, "> 50% budget", S.overruns ? "danger" : "ok"),
+    stat("NaN / Inf", S.nan + " / " + S.inf, "", (S.nan || S.inf) ? "danger" : "ok"),
+  ].join("");
+  document.querySelectorAll("#seg-engine button").forEach((b) => b.classList.toggle("on", b.dataset.v === S.engine));
+  document.querySelectorAll("#seg-wave button").forEach((b) => b.classList.toggle("on", b.dataset.v === S.wave));
+  document.querySelectorAll("#seg-voices button").forEach((b) => b.classList.toggle("on", b.dataset.v === String(S.voices)));
+}
+
+function stat(l, v, h, tone) {
+  return '<div class="stat ' + (tone || "") + '"><div class="l">' + l + '</div><div class="v">' + v + "</div>" +
+    (h ? '<div class="h">' + h + "</div>" : "") + "</div>";
+}
+
+async function runCell(engine, voices, ms) {
+  node.port.postMessage({ type: "engine", engine });
+  node.port.postMessage({ type: "reset" });
+  node.port.postMessage({ type: "set_voices_abs", packed: voiceChord(voices) });
+  await wait(40);
+  if (benchCancel) return null;
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("timeout")), 20000);
+    measureWait = { resolve: (r) => { clearTimeout(t); resolve(r); }, reject: (e) => { clearTimeout(t); reject(e); } };
+    node.port.postMessage({ type: "measure", ms, frames: 128 });
+  }).catch(() => null);
+}
+
+function summarize(rows) {
+  const steps = [1, 8, 16, 32];
+  const pairs = [];
+  for (const v of steps) {
+    const js = rows.find((r) => r.engine === "js" && r.voices === v);
+    const wasm = rows.find((r) => r.engine === "wasm" && r.voices === v);
+    if (js && wasm) pairs.push({ v, js, wasm });
+  }
+  const wasmF = pairs.filter((p) => p.wasm.medianUs < p.js.medianUs * 0.92).map((p) => p.v);
+  const jsF = pairs.filter((p) => p.js.medianUs < p.wasm.medianUs * 0.92).map((p) => p.v);
+  const fmt = (n) => (n === 1 ? "1 voice" : n + " voices");
+  let crossover = "Run the battery to compare engines.";
+  if (!pairs.length) return crossover;
+  if (wasmF.length === pairs.length) crossover = "WASM was faster at every tested voice count.";
+  else if (jsF.length === pairs.length) crossover = "JS stayed faster at every tested voice count.";
+  else if (!wasmF.length && !jsF.length) crossover = "No meaningful crossover — JS and WASM stay within 8% at every voice count.";
+  else if (wasmF.length && !jsF.length) crossover = "WASM is faster at " + wasmF.map(fmt).join(", ") + "; remaining counts stay within 8%.";
+  else if (jsF.length && !wasmF.length) crossover = "JS is faster at " + jsF.map(fmt).join(", ") + "; remaining counts stay within 8%.";
+  else crossover = "WASM is faster at " + (wasmF.map(fmt).join(", ") || "—") + "; JS at " + (jsF.map(fmt).join(", ") || "—") + ".";
+  return crossover;
+}
+
+function paintBench() {
+  document.getElementById("bench-progress").textContent = S.bench.progress;
+  const rows = S.bench.rows;
+  document.getElementById("run-bench").textContent = S.bench.running ? "Cancel" : "Run battery";
+  if (!rows.length) return;
+  document.getElementById("bench-chart-card").classList.remove("hidden");
+  document.getElementById("bench-table-card").classList.remove("hidden");
+  document.getElementById("bench-read").classList.remove("hidden");
+  const max = Math.max(1, ...rows.map((r) => r.medianUs));
+  const steps = [1, 8, 16, 32];
+  document.getElementById("bars").innerHTML = steps.map((v) => {
+    const js = rows.find((r) => r.engine === "js" && r.voices === v);
+    const wasm = rows.find((r) => r.engine === "wasm" && r.voices === v);
+    const jh = js ? (js.medianUs / max) * 100 : 0;
+    const wh = wasm ? (wasm.medianUs / max) * 100 : 0;
+    return '<div class="bar-col"><div class="bar-pair"><div class="bar js" style="height:' + jh + '%"></div><div class="bar wasm" style="height:' + wh + '%"></div></div><span>' + v + "</span></div>";
+  }).join("");
+  document.getElementById("bench-body").innerHTML = rows.map((r) =>
+    "<tr><td>" + r.engine.toUpperCase() + "</td><td>" + r.voices + "</td><td>" + r.medianUs.toFixed(2) + "</td><td>" + r.quanta +
+    "</td><td>" + (r.nan + r.inf) + '</td><td>' + (r.underHalf ? '<span class="badge ok">pass</span>' : '<span class="badge danger">fail</span>') + "</td></tr>"
+  ).join("");
+  document.getElementById("crossover").textContent = S.bench.crossover;
+}
+
+async function runBench() {
+  if (S.bench.running) { benchCancel = true; return; }
+  await boot();
+  benchCancel = false;
+  S.bench.running = true; S.bench.rows = []; S.bench.progress = "Arming…";
+  gainP.setTargetAtTime(0, ctx.currentTime, 0.01);
+  node.port.postMessage({ type: "live", on: false });
+  paintBench();
+  const proto = S.bench.protocol;
+  const ms = proto === "full" ? 500 : proto === "quick" ? 280 : 160;
+  const rows = [];
+  for (const engine of ["js", "wasm"]) {
+    for (const voices of [1, 8, 16, 32]) {
+      if (benchCancel) break;
+      S.bench.progress = engine.toUpperCase() + " · " + voices + " voice" + (voices === 1 ? "" : "s");
+      paintBench();
+      const row = await runCell(engine, voices, ms);
+      if (row) { rows.push(row); S.bench.rows = rows.slice(); S.bench.crossover = summarize(rows); paintBench(); }
+    }
+  }
+  node.port.postMessage({ type: "live", on: true });
+  node.port.postMessage({ type: "note_off" });
+  node.port.postMessage({ type: "engine", engine: S.engine });
+  node.port.postMessage({ type: "voices", n: S.voices });
+  S.bench.running = false;
+  S.bench.progress = benchCancel ? "Cancelled" : "Done";
+  S.bench.crossover = summarize(rows);
+  paintBench();
+}
+
+function paintDisc() {
+  const d = S.disc;
+  const pct = d.seconds ? Math.min(1, d.elapsed / d.seconds) : 0;
+  document.getElementById("disc-prog").classList.toggle("hidden", !(d.running || d.done));
+  document.getElementById("disc-label").textContent = d.elapsed.toFixed(1) + "s / " + d.seconds + "s";
+  document.getElementById("disc-pct").textContent = Math.round(pct * 100) + "%";
+  document.getElementById("disc-bar").style.width = (pct * 100) + "%";
+  document.getElementById("disc-probe").textContent = d.running ? "Stop" : "Probe · 20s";
+  document.getElementById("disc-full").textContent = d.running ? "Stop" : "Full · 5 min";
+  document.getElementById("disc-stats").innerHTML = [
+    stat("Pages", d.pages + " / 1", "start " + d.startPages, d.grew ? "danger" : "ok"),
+    stat("Grew?", d.grew ? "YES" : "no", "", d.grew ? "danger" : "ok"),
+    stat("NaN / Inf", d.nan + " / " + d.inf, "", (d.nan || d.inf) ? "danger" : "ok"),
+    stat("Overruns", d.overruns, "> 50% of quantum", d.overruns ? "danger" : "ok"),
+  ].join("");
+}
+
+async function runDisc(seconds) {
+  if (S.disc.running) { discCancel = true; return; }
+  await boot();
+  discCancel = false;
+  const prevE = S.engine, prevV = S.voices;
+  setEngine("wasm"); setVoices(32);
+  node.port.postMessage({ type: "live", on: false });
+  node.port.postMessage({ type: "reset" });
+  node.port.postMessage({ type: "set_voices_abs", packed: voiceChord(32) });
+  S.disc = { running: true, seconds, elapsed: 0, startPages: S.memPages, pages: S.memPages, grew: false, nan: 0, inf: 0, overruns: 0, alloc: 0, quanta: 0, done: false };
+  paintDisc();
+  const t0 = performance.now();
+  while (!discCancel) {
+    const elapsed = (performance.now() - t0) / 1000;
+    S.disc.elapsed = elapsed;
+    S.disc.pages = S.memPages;
+    S.disc.grew = S.memGrew || S.memPages !== S.disc.startPages;
+    S.disc.nan = S.nan; S.disc.inf = S.inf; S.disc.overruns = S.overruns; S.disc.quanta = S.quanta;
+    paintDisc();
+    if (elapsed >= seconds) break;
+    await wait(250);
+  }
+  node.port.postMessage({ type: "note_off" });
+  node.port.postMessage({ type: "live", on: true });
+  setEngine(prevE); setVoices(prevV);
+  S.disc.running = false; S.disc.done = !discCancel;
+  S.disc.elapsed = Math.min(seconds, S.disc.elapsed);
+  paintDisc();
+}
+
+document.querySelectorAll(".tabs button").forEach((b) => {
+  b.onclick = () => {
+    document.querySelectorAll(".tabs button").forEach((x) => x.classList.toggle("on", x === b));
+    ["play", "bench", "discipline", "c"].forEach((id) => {
+      document.getElementById("tab-" + id).classList.toggle("hidden", id !== b.dataset.tab);
+    });
+  };
+});
+document.getElementById("toggle").onclick = () => { if (S.playing) stop(); else start(); };
+document.getElementById("hold").onclick = () => { S.hold.target = 120; S.hold.done = false; start(); };
+document.getElementById("freq").oninput = (e) => {
+  S.freq = +e.target.value;
+  if (ctx && freqP) freqP.setTargetAtTime(S.freq, ctx.currentTime, 0.008);
+  paintPlay();
+};
+document.getElementById("gain").oninput = (e) => {
+  S.gain = +e.target.value;
+  if (S.playing && ctx && gainP) gainP.setTargetAtTime(S.gain, ctx.currentTime, 0.005);
+  paintPlay();
+};
+document.querySelectorAll("#seg-engine button").forEach((b) => b.onclick = () => setEngine(b.dataset.v));
+document.querySelectorAll("#seg-wave button").forEach((b) => b.onclick = () => setWave(b.dataset.v));
+document.querySelectorAll("#seg-voices button").forEach((b) => b.onclick = () => setVoices(+b.dataset.v));
+document.querySelectorAll("[data-proto]").forEach((b) => {
+  b.onclick = () => {
+    S.bench.protocol = b.dataset.proto;
+    document.querySelectorAll("[data-proto]").forEach((x) => x.classList.toggle("on", x === b));
+  };
+});
+document.getElementById("run-bench").onclick = () => runBench();
+document.getElementById("disc-probe").onclick = () => { if (S.disc.running) discCancel = true; else runDisc(20); };
+document.getElementById("disc-full").onclick = () => { if (S.disc.running) discCancel = true; else runDisc(300); };
+
+paintPlay();
+paintDisc();
+document.getElementById("c-view").textContent = document.getElementById("src-c").textContent;
+window.__core = { start, stop, snapshot: () => S };
+</script>
+</body>
+</html>
