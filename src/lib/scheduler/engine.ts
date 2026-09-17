@@ -15,6 +15,7 @@ import {
   type ExperimentState,
   type WorkletStats,
 } from "./stats";
+import { assetUrl } from "@/lib/asset";
 
 export type AheadSnapshot = {
   playing: boolean;
@@ -207,7 +208,7 @@ export class LookaheadEngine {
     this.ctx = ctx;
     if (ctx.state === "suspended") await ctx.resume();
     try {
-      await ctx.audioWorklet.addModule("/worklets/lookahead-processor.js");
+      await ctx.audioWorklet.addModule(assetUrl("worklets/lookahead-processor.js"));
     } catch {
       this.snap = {
         ...this.snap,

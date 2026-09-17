@@ -1,0 +1,5 @@
+/** Prefix a public-file path with Vite's base (GitHub Pages lives under /repo/). */
+export function assetUrl(path: string): string {
+  const base = import.meta.env.BASE_URL || "/";
+  return `${base}${path.replace(/^\//, "")}`;
+}

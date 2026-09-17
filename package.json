@@ -4,9 +4,11 @@
   "version": "1.0.0",
   "type": "module",
   "description": "Two-part invention in D minor, played by a C wavetable compiled to WASM in the browser.",
+  "homepage": "https://yishengjiang99.github.io/algorithmic-invention/",
   "scripts": {
     "dev": "vite dev --host 0.0.0.0 --port 5173",
     "build": "vite build",
+    "build:pages": "vite build --config vite.pages.config.ts && node scripts/pages-postbuild.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "lint": "eslint ."

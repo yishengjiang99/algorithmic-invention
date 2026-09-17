@@ -4,6 +4,7 @@ export type BenchProtocol = "probe" | "quick" | "full";
 
 import { ODE_TO_JOY, noteAt, noteHz, type Tune } from "./tunes";
 import { midiToHz, type Invention, type ScoreNote } from "@/lib/invention/generate";
+import { assetUrl } from "@/lib/asset";
 
 export type BenchRow = {
   engine: EngineKind;
@@ -343,12 +344,12 @@ export class CoreEngine {
     this.emit();
 
     const [, cSource] = await Promise.all([
-      loadScript("/c2wat.js"),
-      fetch("/wavetable.c").then((r) => {
+      loadScript(assetUrl("c2wat.js")),
+      fetch(assetUrl("wavetable.c")).then((r) => {
         if (!r.ok) throw new Error("Failed to fetch wavetable.c");
         return r.text();
       }),
-      ctx.audioWorklet.addModule("/worklets/wavetable-processor.js?v=7"),
+      ctx.audioWorklet.addModule(assetUrl("worklets/wavetable-processor.js") + "?v=7"),
     ]);
     this.snap = { ...this.snap, cSource };
     this.emit();
@@ -1060,7 +1061,7 @@ async function loadWabt(): Promise<WabtMod> {
   try {
     await loadScript("https://cdn.jsdelivr.net/npm/wabt@1.0.36/index.js");
   } catch {
-    await loadScript("/vendor/wabt.js");
+    await loadScript(assetUrl("vendor/wabt.js"));
   }
   const w2 = (globalThis as { WabtModule?: () => Promise<WabtMod> }).WabtModule;
   if (typeof w2 !== "function") throw new Error("wabt did not load");

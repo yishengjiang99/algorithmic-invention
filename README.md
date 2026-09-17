@@ -2,6 +2,8 @@
 
 A two-part invention in D minor, grown from one motif and played by a **band-limited wavetable written in C**, compiled to WASM in the browser, and rendered on the audio thread.
 
+**Live:** [yishengjiang99.github.io/algorithmic-invention](https://yishengjiang99.github.io/algorithmic-invention/)
+
 [https://github.com/yishengjiang99/algorithmic-invention](https://github.com/yishengjiang99/algorithmic-invention)
 
 ## What it does
@@ -47,6 +49,12 @@ Open the printed local URL. First Play needs a user gesture (browser autoplay po
 ```bash
 npm run build
 npm run typecheck
+```
+
+Pushes to `main` build a static site and publish it to GitHub Pages (`.github/workflows/pages.yml`). Locally:
+
+```bash
+npm run build:pages
 ```
 
 Optional: rebuild the precompiled module (the live path compiles C in-page either way):

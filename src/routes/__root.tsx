@@ -2,6 +2,7 @@ import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-r
 import appCss from "../styles.css?url";
 
 const APP_NAME = "Algorithmic Invention";
+const isSpa = import.meta.env.VITE_SPA === "1";
 
 export const Route = createRootRoute({
   head: () => ({
@@ -17,7 +18,7 @@ export const Route = createRootRoute({
       { name: "theme-color", content: "#0a0b0d" },
     ],
     links: [
-      { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },
+      { rel: "icon", type: "image/svg+xml", href: `${import.meta.env.BASE_URL}favicon.svg` },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
       {
@@ -27,7 +28,15 @@ export const Route = createRootRoute({
       { rel: "stylesheet", href: appCss },
     ],
   }),
-  component: () => (
+  component: isSpa ? SpaShell : DocumentShell,
+});
+
+function SpaShell() {
+  return <Outlet />;
+}
+
+function DocumentShell() {
+  return (
     <html lang="en" className="dark antialiased" suppressHydrationWarning>
       <head>
         <HeadContent />
@@ -37,5 +46,5 @@ export const Route = createRootRoute({
         <Scripts />
       </body>
     </html>
-  ),
-});
+  );
+}
