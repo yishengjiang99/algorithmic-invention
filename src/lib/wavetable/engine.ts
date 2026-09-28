@@ -34,6 +34,9 @@ export type AnalysisSnap = {
   writtenBlocks: number;
   droppedBlocks: number;
   analyzedBlocks: number;
+  producedSamples: number;
+  consumedSamples: number;
+  droppedSamples: number;
   displayPosts: number;
   overrunEvents: number;
   deadlineMiss: number;
@@ -44,7 +47,7 @@ export type AnalysisSnap = {
 import { ODE_TO_JOY, noteAt, noteHz, type Tune } from "./tunes";
 import { midiToHz, type Invention, type ScoreNote } from "@/lib/invention/generate";
 import { assetUrl } from "@/lib/asset";
-import { createRing, snapshotHeader, type RingViews } from "@/lib/ring/spsc-ring";
+import { createRing, type RingViews } from "@/lib/ring/spsc-ring";
 
 export type BenchRow = {
   engine: EngineKind;
@@ -169,6 +172,9 @@ const EMPTY_ANALYSIS: AnalysisSnap = {
   writtenBlocks: 0,
   droppedBlocks: 0,
   analyzedBlocks: 0,
+  producedSamples: 0,
+  consumedSamples: 0,
+  droppedSamples: 0,
   displayPosts: 0,
   overrunEvents: 0,
   deadlineMiss: 0,
@@ -353,6 +359,13 @@ export class CoreEngine {
   private expCancel = false;
   private expLatencies: number[] = [];
   private expProcess: number[] = [];
+  private expBase = {
+    producedSamples: 0,
+    consumedSamples: 0,
+    droppedSamples: 0,
+    deadlineMiss: 0,
+    displayPosts: 0,
+  };
 
 
   getAnalyser() {
@@ -452,7 +465,7 @@ export class CoreEngine {
         if (!r.ok) throw new Error("Failed to fetch wavetable.c");
         return r.text();
       }),
-      ctx.audioWorklet.addModule(assetUrl("worklets/wavetable-processor.js") + "?v=8"),
+      ctx.audioWorklet.addModule(assetUrl("worklets/wavetable-processor.js") + "?v=9"),
     ]);
     this.snap = { ...this.snap, cSource };
     this.emit();
@@ -615,19 +628,46 @@ export class CoreEngine {
       this.measureWait?.reject(new Error(msg.message ?? "Worklet error"));
       this.measureWait = null;
       this.emit();
+    } else if (msg.type === "clock") {
+      const clock = data as { timeOrigin?: number };
+      if (typeof clock.timeOrigin === "number") {
+        this.analysisWorker?.postMessage({ type: "clock", timeOrigin: clock.timeOrigin });
+      }
     } else if (msg.type === "xfer_block") {
-      const block = data as { samples?: ArrayBuffer; n?: number; t0?: number; processUs?: number };
+      const block = data as {
+        samples?: ArrayBuffer;
+        n?: number;
+        t0?: number;
+        timeOrigin?: number;
+        processUs?: number;
+        missed?: number;
+      };
       this.analysisWorker?.postMessage(
-        { type: "block", samples: block.samples, n: block.n, t0: block.t0 },
+        {
+          type: "block",
+          samples: block.samples,
+          n: block.n,
+          t0: block.t0,
+          timeOrigin: block.timeOrigin,
+          processUs: block.processUs,
+          missed: block.missed,
+        },
         block.samples ? [block.samples] : [],
       );
     } else if (msg.type === "xfer_drop") {
-      this.analysisWorker?.postMessage({ type: "dropped", n: 1 });
+      const drop = data as { n?: number; missed?: number };
+      this.analysisWorker?.postMessage({
+        type: "dropped",
+        n: 1,
+        samples: drop.n ?? 0,
+        missed: drop.missed ?? 0,
+      });
       this.snap = {
         ...this.snap,
         analysis: {
           ...this.snap.analysis,
           droppedBlocks: this.snap.analysis.droppedBlocks + 1,
+          droppedSamples: this.snap.analysis.droppedSamples + (drop.n ?? 0),
         },
       };
     }
@@ -1154,9 +1194,10 @@ export class CoreEngine {
 
   private attachAnalysis(node: AudioWorkletNode) {
     const isolated = this.isolated();
+    const path: AnalysisPath = isolated ? this.snap.analysis.path : "transfer";
     this.snap = {
       ...this.snap,
-      analysis: { ...this.snap.analysis, isolated },
+      analysis: { ...this.snap.analysis, isolated, path },
     };
     try {
       this.analysisWorker?.terminate();
@@ -1170,7 +1211,7 @@ export class CoreEngine {
       node.port.postMessage({ type: "ring", sab: this.ring.sab });
       this.analysisWorker.postMessage({ type: "init", sab: this.ring.sab });
     }
-    node.port.postMessage({ type: "path", path: this.snap.analysis.path });
+    node.port.postMessage({ type: "path", path });
   }
 
   private onAnalysis(data: unknown) {
@@ -1186,17 +1227,22 @@ export class CoreEngine {
       writtenBlocks?: number;
       droppedBlocks?: number;
       analyzedBlocks?: number;
+      producedSamples?: number;
+      consumedSamples?: number;
+      droppedSamples?: number;
       displayPosts?: number;
       overrunEvents?: number;
       deadlineMiss?: number;
+      path?: AnalysisPath;
     };
     if (msg.type === "recycle" && msg.buffer) {
       this.node?.port.postMessage({ type: "recycle_buf", buffer: msg.buffer }, [msg.buffer]);
       return;
     }
     if (msg.type !== "meters") return;
+    if (msg.path && msg.path !== this.snap.analysis.path) return;
     const latency = Math.max(0, msg.latencyMs ?? 0);
-    if (this.snap.analysis.experiment.running) {
+    if (this.snap.analysis.experiment.running && Number.isFinite(latency)) {
       this.expLatencies.push(latency);
       if (msg.processUs) this.expProcess.push(msg.processUs);
     }
@@ -1212,6 +1258,9 @@ export class CoreEngine {
         writtenBlocks: msg.writtenBlocks ?? this.snap.analysis.writtenBlocks,
         droppedBlocks: msg.droppedBlocks ?? this.snap.analysis.droppedBlocks,
         analyzedBlocks: msg.analyzedBlocks ?? this.snap.analysis.analyzedBlocks,
+        producedSamples: msg.producedSamples ?? this.snap.analysis.producedSamples,
+        consumedSamples: msg.consumedSamples ?? this.snap.analysis.consumedSamples,
+        droppedSamples: msg.droppedSamples ?? this.snap.analysis.droppedSamples,
         displayPosts: msg.displayPosts ?? this.snap.analysis.displayPosts,
         overrunEvents: msg.overrunEvents ?? this.snap.analysis.overrunEvents,
         deadlineMiss: msg.deadlineMiss ?? this.snap.analysis.deadlineMiss,
@@ -1295,7 +1344,15 @@ export class CoreEngine {
     this.expProcess = [];
     const seconds = opts?.seconds ?? 60;
     if (!this.snap.playing) await this.start();
-    const startWritten = this.ring ? snapshotHeader(this.ring.hdr).writtenBlocks : this.snap.analysis.writtenBlocks;
+    await this.wait(80);
+    const a0 = this.snap.analysis;
+    this.expBase = {
+      producedSamples: a0.producedSamples,
+      consumedSamples: a0.consumedSamples,
+      droppedSamples: a0.droppedSamples,
+      deadlineMiss: a0.deadlineMiss,
+      displayPosts: a0.displayPosts,
+    };
     this.snap = {
       ...this.snap,
       analysis: {
@@ -1326,20 +1383,23 @@ export class CoreEngine {
       await this.wait(200);
     }
 
-    const hdr = this.ring ? snapshotHeader(this.ring.hdr) : null;
-    const intended = hdr ? hdr.writtenBlocks - startWritten : this.snap.analysis.writtenBlocks - startWritten;
-    const delivered = hdr ? hdr.analyzedBlocks : this.snap.analysis.analyzedBlocks;
-    const dropped = hdr ? hdr.droppedBlocks : this.snap.analysis.droppedBlocks;
-    const deadlineMiss = hdr ? hdr.deadlineMiss : this.snap.analysis.deadlineMiss;
-    const displayPosts = hdr ? hdr.displayPosts : this.snap.analysis.displayPosts;
+    await this.wait(50);
+    const a1 = this.snap.analysis;
+    const intended = Math.max(0, a1.producedSamples - this.expBase.producedSamples);
+    const delivered = Math.max(0, a1.consumedSamples - this.expBase.consumedSamples);
+    const dropped = Math.max(0, a1.droppedSamples - this.expBase.droppedSamples);
+    const deadlineMiss = Math.max(0, a1.deadlineMiss - this.expBase.deadlineMiss);
+    const displayPosts = Math.max(0, a1.displayPosts - this.expBase.displayPosts);
     const medianMs = percentile(this.expLatencies, 0.5);
     const p99Ms = percentile(this.expLatencies, 0.99);
     const processUs = percentile(this.expProcess, 0.5);
     const ratio = intended > 0 ? delivered / intended : 0;
-    const pass = ratio >= 0.99 && p99Ms < 30 && deadlineMiss === 0;
-    const notes = pass
-      ? `${path} delivered ${(ratio * 100).toFixed(2)}% of quanta, p99 ${p99Ms.toFixed(2)} ms, zero deadline misses.`
-      : `${path} delivered ${(ratio * 100).toFixed(2)}% of quanta, p99 ${p99Ms.toFixed(2)} ms, deadline misses ${deadlineMiss}.`;
+    const pass = intended > 0 && ratio >= 0.99 && p99Ms < 30 && deadlineMiss === 0;
+    const notes = intended === 0
+      ? `${path} produced no analysis samples. Start audio first.`
+      : pass
+        ? `${path} delivered ${(ratio * 100).toFixed(2)}% of produced samples, p99 ${p99Ms.toFixed(2)} ms, zero deadline misses.`
+        : `${path} delivered ${(ratio * 100).toFixed(2)}% of produced samples, p99 ${p99Ms.toFixed(2)} ms, deadline misses ${deadlineMiss}.`;
     const experiment: RingExperiment = {
       running: false,
       path,

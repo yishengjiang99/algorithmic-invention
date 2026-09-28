@@ -30,6 +30,7 @@ const RING_H_WRITE_TIME = 7;
 const RING_H_PROCESS_US = 8;
 const RING_H_DEADLINE_MISS = 9;
 const RING_H_LAST_BLOCK = 14;
+const RING_H_ANALYZED_SAMPLES = 15;
 const XFER_POOL = 64;
 const XFER_FRAMES = 256;
 
@@ -232,6 +233,11 @@ class WavetableProcessor extends AudioWorkletProcessor {
       this.ringSamples = new Float32Array(data.sab, RING_HEADER_BYTES, this.ringCap);
       this.ringPath = 0;
       Atomics.store(this.ringHdr, 13, 1);
+      this.port.postMessage({
+        type: "clock",
+        timeOrigin: performance.timeOrigin,
+        now: nowMs(),
+      });
       return;
     }
     if (type === "path") {
@@ -475,13 +481,12 @@ class WavetableProcessor extends AudioWorkletProcessor {
     const r = Atomics.load(hdr, RING_H_READ);
     const used = (w - r) >>> 0;
     if (used + n > cap) {
-      const drop = used + n - cap;
-      Atomics.add(hdr, RING_H_READ, drop);
-      Atomics.add(hdr, RING_H_OVERRUN_SAMPLES, drop);
+      Atomics.add(hdr, RING_H_OVERRUN_SAMPLES, n);
       Atomics.add(hdr, RING_H_OVERRUN_EVENTS, 1);
       Atomics.add(hdr, RING_H_DROPPED_BLOCKS, 1);
+      return;
     }
-    let idx = w & mask;
+    const idx = w & mask;
     const first = n < cap - idx ? n : cap - idx;
     for (let i = 0; i < first; i++) buf[idx + i] = src[i];
     for (let i = first; i < n; i++) buf[i - first] = src[i];
@@ -496,21 +501,26 @@ class WavetableProcessor extends AudioWorkletProcessor {
   }
 
   tapTransfer(src, n, processUs) {
+    const budget = n * this.invSr * 1e6;
+    const missed = processUs > budget ? 1 : 0;
     if (this.xferTop <= 0) {
-      if (this.ringHdr) Atomics.add(this.ringHdr, RING_H_DROPPED_BLOCKS, 1);
-      this.port.postMessage({ type: "xfer_drop" });
+      this.port.postMessage({ type: "xfer_drop", n, processUs, missed });
       return;
     }
     const slot = this.xferFree[--this.xferTop];
     const buf = this.xferPool[slot];
     const frames = n < buf.length ? n : buf.length;
     for (let i = 0; i < frames; i++) buf[i] = src[i];
-    if (this.ringHdr) {
-      Atomics.store(this.ringHdr, RING_H_PROCESS_US, processUs | 0);
-      Atomics.add(this.ringHdr, RING_H_WRITTEN_BLOCKS, 1);
-    }
     this.port.postMessage(
-      { type: "xfer_block", samples: buf.buffer, n: frames, t0: nowMs(), processUs, index: slot },
+      {
+        type: "xfer_block",
+        samples: buf.buffer,
+        n: frames,
+        t0: nowMs(),
+        timeOrigin: performance.timeOrigin,
+        processUs,
+        missed,
+      },
       [buf.buffer],
     );
     this.xferPool[slot] = null;

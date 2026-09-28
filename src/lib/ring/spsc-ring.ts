@@ -8,36 +8,35 @@
  *
  * Header
  * ------
- *   0  write            total samples written (uint32, wrapping)
+ *   0  write            total samples published (uint32, wrapping)
  *   1  read             total samples consumed (uint32, wrapping)
  *   2  capacity
- *   3  overrunSamples   samples discarded when the writer lapped the reader
- *   4  overrunEvents    times the writer lapped the reader
+ *   3  overrunSamples   samples refused because the ring was full
+ *   4  overrunEvents    times a write was refused
  *   5  writtenBlocks    process() quanta that committed samples
- *   6  droppedBlocks    quanta the writer could not / would not keep
- *   7  writeTimeCentiMs last write timestamp, performance.now() * 100
+ *   6  droppedBlocks    quanta refused (full) or transfer-pool empty
+ *   7  writeTimeCentiMs last worklet performance.now() * 100
  *   8  processUs        last quantum render time
  *   9  deadlineMiss     quanta whose render exceeded the sample budget
- *  10  analyzedBlocks   worker-consumed blocks
+ *  10  analyzedBlocks   worker-consumed windows
  *  11  displayPosts     low-rate messages sent to the main thread
- *  12  seq              published write sequence (same as writtenBlocks)
+ *  12  seq              published write sequence
  *  13  flags            bit0 = isolated path armed
  *  14  lastBlockFrames  frames in the last committed quantum
- *  15  reserved
+ *  15  analyzedSamples  worker-consumed samples
  *
  * Overflow
  * --------
- * If a write would exceed capacity, the writer advances `read` by the
- * overflow (oldest samples die) and increments the overrun counters.
- * Audio output is independent of this tap — the worklet still fills
- * its output buffer.
+ * Strict SPSC: only the consumer stores `read`. If a write would exceed
+ * capacity the producer refuses the block, increments overrun counters,
+ * and returns 0. Audio output is independent of this tap.
  *
  * Memory ordering
  * ---------------
  * Sample stores happen-before Atomics.add(write). The reader
- * Atomics.load(write) then copies, then CAS-es `read` forward.
- * If the CAS fails the writer overtook mid-copy; the reader drops
- * that window instead of moving read backwards.
+ * Atomics.load(write), copies, then CAS-es `read` forward.
+ * A failed CAS means the reader lost the race with itself or saw a
+ * torn window; it drops that copy instead of moving `read` backwards.
  */
 
 export const HEADER_INTS = 16;
@@ -59,6 +58,7 @@ export const H = {
   SEQ: 12,
   FLAGS: 13,
   LAST_BLOCK: 14,
+  ANALYZED_SAMPLES: 15,
 } as const;
 
 export type RingViews = {
@@ -123,7 +123,7 @@ export function isFull(hdr: Int32Array): boolean {
 
 /**
  * Copy `n` samples from `src` into the ring. Never allocates.
- * Returns frames actually stored (always n — overflow drops oldest).
+ * Returns frames stored, or 0 if the block would overflow.
  */
 export function writeSamples(
   ring: RingViews,
@@ -139,13 +139,12 @@ export function writeSamples(
   const r = Atomics.load(hdr, H.READ);
   const used = (w - r) >>> 0;
   if (used + n > cap) {
-    const drop = used + n - cap;
-    Atomics.add(hdr, H.READ, drop);
-    Atomics.add(hdr, H.OVERRUN_SAMPLES, drop);
+    Atomics.add(hdr, H.OVERRUN_SAMPLES, n);
     Atomics.add(hdr, H.OVERRUN_EVENTS, 1);
     Atomics.add(hdr, H.DROPPED_BLOCKS, 1);
+    return 0;
   }
-  let idx = w & mask;
+  const idx = w & mask;
   const first = n < cap - idx ? n : cap - idx;
   for (let i = 0; i < first; i++) samples[idx + i] = src[i] as number;
   for (let i = first; i < n; i++) samples[i - first] = src[i] as number;
@@ -167,16 +166,18 @@ export function readSamples(
   const { hdr, samples, cap, mask } = ring;
   const r = Atomics.load(hdr, H.READ);
   const w = Atomics.load(hdr, H.WRITE);
-  let avail = (w - r) >>> 0;
-  if (avail > cap) avail = cap;
+  const availRaw = (w - r) >>> 0;
+  const avail = availRaw > cap ? cap : availRaw;
   const n = avail < max ? avail : max;
   if (n <= 0) return 0;
-  let idx = r & mask;
+  const idx = r & mask;
   const first = n < cap - idx ? n : cap - idx;
   for (let i = 0; i < first; i++) dst[i] = samples[idx + i];
   for (let i = first; i < n; i++) dst[i] = samples[i - first];
   const ok = Atomics.compareExchange(hdr, H.READ, r, r + n);
   if (ok !== r) return 0;
+  Atomics.add(hdr, H.ANALYZED_SAMPLES, n);
+  Atomics.add(hdr, H.ANALYZED_BLOCKS, 1);
   return n;
 }
 
@@ -196,5 +197,6 @@ export function snapshotHeader(hdr: Int32Array) {
     displayPosts: Atomics.load(hdr, H.DISPLAY_POSTS),
     seq: Atomics.load(hdr, H.SEQ),
     lastBlock: Atomics.load(hdr, H.LAST_BLOCK),
+    analyzedSamples: Atomics.load(hdr, H.ANALYZED_SAMPLES),
   };
 }

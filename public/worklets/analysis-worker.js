@@ -19,6 +19,7 @@ const H_DEADLINE_MISS = 9;
 const H_ANALYZED_BLOCKS = 10;
 const H_DISPLAY_POSTS = 11;
 const H_LAST_BLOCK = 14;
+const H_ANALYZED_SAMPLES = 15;
 
 const DISPLAY_MS = 16;
 const SCRATCH = 2048;
@@ -27,12 +28,21 @@ let hdr = null;
 let samples = null;
 let cap = 0;
 let mask = 0;
-let scratch = new Float32Array(SCRATCH);
+const scratch = new Float32Array(SCRATCH);
 let lastDisplay = 0;
 let peakHold = 0;
 let running = false;
+let workletOrigin = 0;
 let transferDrops = 0;
 let transferGot = 0;
+let transferSamples = 0;
+let transferDroppedSamples = 0;
+let transferMiss = 0;
+let transferProcessUs = 0;
+
+function wallNow() {
+  return performance.timeOrigin + performance.now();
+}
 
 function attach(sab) {
   hdr = new Int32Array(sab, 0, HEADER_INTS);
@@ -45,16 +55,18 @@ function readShared() {
   if (!hdr || !samples) return 0;
   const r = Atomics.load(hdr, H_READ);
   const w = Atomics.load(hdr, H_WRITE);
-  let avail = (w - r) >>> 0;
-  if (avail > cap) avail = cap;
+  const availRaw = (w - r) >>> 0;
+  const avail = availRaw > cap ? cap : availRaw;
   const n = avail < SCRATCH ? avail : SCRATCH;
   if (n <= 0) return 0;
-  let idx = r & mask;
+  const idx = r & mask;
   const first = n < cap - idx ? n : cap - idx;
   for (let i = 0; i < first; i++) scratch[i] = samples[idx + i];
   for (let i = first; i < n; i++) scratch[i] = samples[i - first];
   const ok = Atomics.compareExchange(hdr, H_READ, r, r + n);
   if (ok !== r) return 0;
+  Atomics.add(hdr, H_ANALYZED_SAMPLES, n);
+  Atomics.add(hdr, H_ANALYZED_BLOCKS, 1);
   return n;
 }
 
@@ -72,47 +84,48 @@ function analyze(buf, n) {
   return { rms, peak, peakHold };
 }
 
+function sharedLatencyMs() {
+  if (!hdr) return 0;
+  const writeCenti = Atomics.load(hdr, H_WRITE_TIME);
+  if (!writeCenti || !workletOrigin) return 0;
+  const producedWall = workletOrigin + writeCenti / 100;
+  const lag = wallNow() - producedWall;
+  return lag > 0 ? lag : 0;
+}
+
 function postDisplay(levels, extra) {
   const now = performance.now();
-  if (now - lastDisplay < DISPLAY_MS) return;
+  if (now - lastDisplay < DISPLAY_MS && !extra.force) return;
   lastDisplay = now;
-  if (hdr) Atomics.add(hdr, H_DISPLAY_POSTS, 1);
-  const writeTime = hdr ? Atomics.load(hdr, H_WRITE_TIME) : 0;
-  const latencyMs = writeTime ? now - writeTime / 100 : 0;
+  if (hdr && extra.path === "shared") Atomics.add(hdr, H_DISPLAY_POSTS, 1);
+  const shared = extra.path === "shared" && hdr;
   self.postMessage({
     type: "meters",
+    path: extra.path || "shared",
     rms: levels.rms,
     peak: levels.peak,
     peakHold: levels.peakHold,
-    latencyMs,
-    processUs: hdr ? Atomics.load(hdr, H_PROCESS_US) : 0,
-    writtenBlocks: hdr ? Atomics.load(hdr, H_WRITTEN_BLOCKS) : extra.written || 0,
-    droppedBlocks: hdr ? Atomics.load(hdr, H_DROPPED_BLOCKS) : extra.dropped || 0,
-    analyzedBlocks: hdr ? Atomics.load(hdr, H_ANALYZED_BLOCKS) : extra.analyzed || 0,
-    overrunEvents: hdr ? Atomics.load(hdr, H_OVERRUN_EVENTS) : 0,
-    overrunSamples: hdr ? Atomics.load(hdr, H_OVERRUN_SAMPLES) : 0,
-    deadlineMiss: hdr ? Atomics.load(hdr, H_DEADLINE_MISS) : 0,
-    lastBlock: hdr ? Atomics.load(hdr, H_LAST_BLOCK) : nOr(extra.n),
-    displayPosts: hdr ? Atomics.load(hdr, H_DISPLAY_POSTS) : 0,
-    path: extra.path || "shared",
+    latencyMs: extra.latencyMs != null ? extra.latencyMs : sharedLatencyMs(),
+    processUs: extra.processUs != null ? extra.processUs : shared ? Atomics.load(hdr, H_PROCESS_US) : transferProcessUs,
+    writtenBlocks: shared ? Atomics.load(hdr, H_WRITTEN_BLOCKS) : transferGot,
+    droppedBlocks: shared ? Atomics.load(hdr, H_DROPPED_BLOCKS) : transferDrops,
+    analyzedBlocks: shared ? Atomics.load(hdr, H_ANALYZED_BLOCKS) : transferGot,
+    producedSamples: shared ? Atomics.load(hdr, H_WRITE) >>> 0 : transferSamples + transferDroppedSamples,
+    consumedSamples: shared ? Atomics.load(hdr, H_ANALYZED_SAMPLES) : transferSamples,
+    droppedSamples: shared ? Atomics.load(hdr, H_OVERRUN_SAMPLES) : transferDroppedSamples,
+    overrunEvents: shared ? Atomics.load(hdr, H_OVERRUN_EVENTS) : transferDrops,
+    deadlineMiss: shared ? Atomics.load(hdr, H_DEADLINE_MISS) : transferMiss,
+    lastBlock: extra.n || (shared ? Atomics.load(hdr, H_LAST_BLOCK) : 0),
+    displayPosts: shared ? Atomics.load(hdr, H_DISPLAY_POSTS) : extra.displayPosts || 0,
     t: now,
   });
 }
 
-function nOr(n) {
-  return n || 0;
-}
-
 function pumpShared() {
   if (!running) return;
-  let n = readShared();
-  if (n > 0) {
-    const levels = analyze(scratch, n);
-    if (hdr) Atomics.add(hdr, H_ANALYZED_BLOCKS, 1);
-    postDisplay(levels, { path: "shared", n });
-  }
-  const wait = n > 0 ? 0 : 2;
-  setTimeout(pumpShared, wait);
+  const n = readShared();
+  if (n > 0) postDisplay(analyze(scratch, n), { path: "shared", n });
+  setTimeout(pumpShared, n > 0 ? 0 : 2);
 }
 
 self.onmessage = function (ev) {
@@ -120,8 +133,13 @@ self.onmessage = function (ev) {
   if (!data) return;
   if (data.type === "init" && data.sab) {
     attach(data.sab);
+    if (typeof data.workletOrigin === "number") workletOrigin = data.workletOrigin;
     running = true;
     pumpShared();
+    return;
+  }
+  if (data.type === "clock" && typeof data.timeOrigin === "number") {
+    workletOrigin = data.timeOrigin;
     return;
   }
   if (data.type === "stop") {
@@ -131,20 +149,30 @@ self.onmessage = function (ev) {
   if (data.type === "block") {
     const buf = data.samples;
     const n = data.n | 0;
-    transferGot++;
+    transferGot += 1;
+    transferSamples += n;
+    if (data.processUs) transferProcessUs = data.processUs;
+    if (data.missed) transferMiss += data.missed | 0;
     const view = buf instanceof Float32Array ? buf : new Float32Array(buf);
-    const levels = analyze(view, n || view.length);
-    postDisplay(levels, {
+    const frames = n || view.length;
+    const producerWall =
+      typeof data.timeOrigin === "number" && typeof data.t0 === "number"
+        ? data.timeOrigin + data.t0
+        : 0;
+    const latencyMs = producerWall ? Math.max(0, wallNow() - producerWall) : 0;
+    postDisplay(analyze(view, frames), {
       path: "transfer",
-      written: transferGot,
-      dropped: transferDrops,
-      analyzed: transferGot,
-      n: n || view.length,
+      n: frames,
+      latencyMs,
+      processUs: data.processUs || 0,
+      force: false,
     });
     self.postMessage({ type: "recycle", buffer: view.buffer }, [view.buffer]);
     return;
   }
   if (data.type === "dropped") {
     transferDrops += data.n | 1;
+    transferDroppedSamples += data.samples | 0;
+    if (data.missed) transferMiss += data.missed | 0;
   }
 };

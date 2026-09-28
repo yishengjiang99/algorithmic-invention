@@ -14,7 +14,7 @@ SharedArrayBuffer
 | Index | Name | Who writes |
 | --- | --- | --- |
 | 0 | write (total samples) | worklet |
-| 1 | read (total samples) | worker, or worklet on overflow |
+| 1 | read (total samples) | worker only |
 | 2 | capacity | main, once |
 | 3 | overrunSamples | worklet |
 | 4 | overrunEvents | worklet |
@@ -26,13 +26,15 @@ SharedArrayBuffer
 | 10 | analyzedBlocks | worker |
 | 11 | displayPosts | worker |
 | 12 | seq | worklet |
+| 13 | flags | worklet |
 | 14 | lastBlockFrames | worklet |
+| 15 | analyzedSamples | worker |
 
-## Overflow policy
+## Overflow
 
-If `used + n > capacity`, the writer advances `read` by the overflow
-(oldest samples die), increments overrun counters, then commits the new
-block. Audio output is unchanged — this ring is a tap, not the playback
+Strict SPSC: only the consumer stores `read`. If `used + n > capacity`,
+the writer refuses the block, increments overrun counters, and returns
+0. Audio output is unchanged — this ring is a tap, not the playback
 buffer.
 
 ## Memory ordering
@@ -41,8 +43,8 @@ buffer.
 2. `Atomics.add(write, n)` publishes them (seq_cst).
 3. Worker `Atomics.load(write)`, copies, then
    `compareExchange(read, expected, expected + n)`.
-4. A failed CAS means the writer lapped mid-copy; that window is dropped
-   instead of moving `read` backwards.
+4. A failed CAS means that window is dropped instead of moving `read`
+   backwards. The producer never stores `read`.
 
 ## Capacity
 
