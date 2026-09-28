@@ -1,10 +1,50 @@
 export type EngineKind = "js" | "wasm";
 export type WaveKind = "saw" | "square";
 export type BenchProtocol = "probe" | "quick" | "full";
+export type AnalysisPath = "shared" | "transfer";
+export type AnalysisSource = "osc" | "mic";
+
+export type RingExperiment = {
+  running: boolean;
+  path: AnalysisPath;
+  seconds: number;
+  elapsed: number;
+  intended: number;
+  delivered: number;
+  dropped: number;
+  medianMs: number;
+  p99Ms: number;
+  processUs: number;
+  stallMs: number;
+  deadlineMiss: number;
+  displayPosts: number;
+  pass: boolean | null;
+  notes: string;
+};
+
+export type AnalysisSnap = {
+  isolated: boolean;
+  path: AnalysisPath;
+  source: AnalysisSource;
+  rms: number;
+  peak: number;
+  peakHold: number;
+  latencyMs: number;
+  processUs: number;
+  writtenBlocks: number;
+  droppedBlocks: number;
+  analyzedBlocks: number;
+  displayPosts: number;
+  overrunEvents: number;
+  deadlineMiss: number;
+  experiment: RingExperiment;
+};
+
 
 import { ODE_TO_JOY, noteAt, noteHz, type Tune } from "./tunes";
 import { midiToHz, type Invention, type ScoreNote } from "@/lib/invention/generate";
 import { assetUrl } from "@/lib/asset";
+import { createRing, snapshotHeader, type RingViews } from "@/lib/ring/spsc-ring";
 
 export type BenchRow = {
   engine: EngineKind;
@@ -93,10 +133,48 @@ export type CoreSnapshot = {
     bpm: number;
     total: number;
   };
+  analysis: AnalysisSnap;
 };
 
 const VOICE_STEPS = [1, 8, 16, 32] as const;
 const DUR: Record<BenchProtocol, number> = { probe: 1.5, quick: 4, full: 8 };
+
+const EMPTY_EXPERIMENT: RingExperiment = {
+  running: false,
+  path: "shared",
+  seconds: 60,
+  elapsed: 0,
+  intended: 0,
+  delivered: 0,
+  dropped: 0,
+  medianMs: 0,
+  p99Ms: 0,
+  processUs: 0,
+  stallMs: 25,
+  deadlineMiss: 0,
+  displayPosts: 0,
+  pass: null,
+  notes: "",
+};
+
+const EMPTY_ANALYSIS: AnalysisSnap = {
+  isolated: false,
+  path: "shared",
+  source: "osc",
+  rms: 0,
+  peak: 0,
+  peakHold: 0,
+  latencyMs: 0,
+  processUs: 0,
+  writtenBlocks: 0,
+  droppedBlocks: 0,
+  analyzedBlocks: 0,
+  displayPosts: 0,
+  overrunEvents: 0,
+  deadlineMiss: 0,
+  experiment: EMPTY_EXPERIMENT,
+};
+
 
 const SERVER_SNAP: CoreSnapshot = {
   ready: false,
@@ -152,6 +230,7 @@ const SERVER_SNAP: CoreSnapshot = {
   cSource: "",
   tune: { playing: false, name: "", note: "", index: -1 },
   invention: { playing: false, beat: 0, bpm: 90, total: 20 },
+  analysis: EMPTY_ANALYSIS,
 };
 
 function cloneSnap(s: CoreSnapshot): CoreSnapshot {
@@ -163,6 +242,7 @@ function cloneSnap(s: CoreSnapshot): CoreSnapshot {
     compile: { ...s.compile },
     tune: { ...s.tune },
     invention: { ...s.invention },
+    analysis: { ...s.analysis, experiment: { ...s.analysis.experiment } },
   };
 }
 
@@ -209,6 +289,13 @@ function summarize(rows: BenchRow[]): Pick<CoreSnapshot["bench"], "crossover" | 
   return { crossover, maxStableJs: maxStable("js"), maxStableWasm: maxStable("wasm") };
 }
 
+function percentile(values: number[], p: number): number {
+  if (!values.length) return 0;
+  const sorted = values.slice().sort((a, b) => a - b);
+  const i = Math.min(sorted.length - 1, Math.max(0, Math.ceil(p * sorted.length) - 1));
+  return sorted[i] ?? 0;
+}
+
 export type CoreApi = {
   start: () => Promise<void>;
   stop: () => void;
@@ -227,6 +314,10 @@ export type CoreApi = {
   unlock: () => void;
   getAnalyser: () => AnalyserNode | null;
   getScopeBuffer: () => Uint8Array | null;
+  setAnalysisPath: (path: AnalysisPath) => void;
+  setAnalysisSource: (src: AnalysisSource) => Promise<void>;
+  runRingExperiment: (opts?: { path?: AnalysisPath; seconds?: number }) => Promise<RingExperiment>;
+  cancelRingExperiment: () => void;
   snapshot: () => CoreSnapshot;
 };
 
@@ -255,6 +346,14 @@ export class CoreEngine {
   private tuneTimer = 0;
   private tuneOrigin = 0;
   private activeTune: Tune | null = null;
+  private ring: RingViews | null = null;
+  private analysisWorker: Worker | null = null;
+  private micStream: MediaStream | null = null;
+  private micNode: MediaStreamAudioSourceNode | null = null;
+  private expCancel = false;
+  private expLatencies: number[] = [];
+  private expProcess: number[] = [];
+
 
   getAnalyser() {
     return this.analyser;
@@ -291,6 +390,10 @@ export class CoreEngine {
       unlock: () => void this.unlock(),
       getAnalyser: () => this.analyser,
       getScopeBuffer: () => this.scopeBuf,
+      setAnalysisPath: (path) => this.setAnalysisPath(path),
+      setAnalysisSource: (src) => this.setAnalysisSource(src),
+      runRingExperiment: (opts) => this.runRingExperiment(opts),
+      cancelRingExperiment: () => this.cancelRingExperiment(),
       snapshot: () => this.snap,
     };
   }
@@ -349,7 +452,7 @@ export class CoreEngine {
         if (!r.ok) throw new Error("Failed to fetch wavetable.c");
         return r.text();
       }),
-      ctx.audioWorklet.addModule(assetUrl("worklets/wavetable-processor.js") + "?v=7"),
+      ctx.audioWorklet.addModule(assetUrl("worklets/wavetable-processor.js") + "?v=8"),
     ]);
     this.snap = { ...this.snap, cSource };
     this.emit();
@@ -366,7 +469,7 @@ export class CoreEngine {
     const wasmBuf = compiled.buffer;
 
     const node = new AudioWorkletNode(ctx, "wavetable-processor", {
-      numberOfInputs: 0,
+      numberOfInputs: 1,
       numberOfOutputs: 1,
       outputChannelCount: [1],
       parameterData: { frequency: this.snap.freq, gain: 0 },
@@ -397,6 +500,7 @@ export class CoreEngine {
     node.port.postMessage({ type: "wave", wave: this.snap.wave });
     node.port.postMessage({ type: "voices", n: this.snap.voices });
     node.port.postMessage({ type: "live", on: true });
+    this.attachAnalysis(node);
   }
 
   private onWorklet(data: unknown) {
@@ -511,6 +615,21 @@ export class CoreEngine {
       this.measureWait?.reject(new Error(msg.message ?? "Worklet error"));
       this.measureWait = null;
       this.emit();
+    } else if (msg.type === "xfer_block") {
+      const block = data as { samples?: ArrayBuffer; n?: number; t0?: number; processUs?: number };
+      this.analysisWorker?.postMessage(
+        { type: "block", samples: block.samples, n: block.n, t0: block.t0 },
+        block.samples ? [block.samples] : [],
+      );
+    } else if (msg.type === "xfer_drop") {
+      this.analysisWorker?.postMessage({ type: "dropped", n: 1 });
+      this.snap = {
+        ...this.snap,
+        analysis: {
+          ...this.snap.analysis,
+          droppedBlocks: this.snap.analysis.droppedBlocks + 1,
+        },
+      };
     }
   }
 
@@ -1027,6 +1146,227 @@ export class CoreEngine {
       },
     };
     this.emit();
+  }
+
+  private isolated(): boolean {
+    return typeof crossOriginIsolated !== "undefined" && crossOriginIsolated;
+  }
+
+  private attachAnalysis(node: AudioWorkletNode) {
+    const isolated = this.isolated();
+    this.snap = {
+      ...this.snap,
+      analysis: { ...this.snap.analysis, isolated },
+    };
+    try {
+      this.analysisWorker?.terminate();
+    } catch {
+      /* ignore */
+    }
+    this.analysisWorker = new Worker(assetUrl("worklets/analysis-worker.js"), { name: "analysis" });
+    this.analysisWorker.onmessage = (ev) => this.onAnalysis(ev.data);
+    if (isolated && typeof SharedArrayBuffer === "function") {
+      this.ring = createRing(32768);
+      node.port.postMessage({ type: "ring", sab: this.ring.sab });
+      this.analysisWorker.postMessage({ type: "init", sab: this.ring.sab });
+    }
+    node.port.postMessage({ type: "path", path: this.snap.analysis.path });
+  }
+
+  private onAnalysis(data: unknown) {
+    if (!data || typeof data !== "object") return;
+    const msg = data as {
+      type?: string;
+      buffer?: ArrayBuffer;
+      rms?: number;
+      peak?: number;
+      peakHold?: number;
+      latencyMs?: number;
+      processUs?: number;
+      writtenBlocks?: number;
+      droppedBlocks?: number;
+      analyzedBlocks?: number;
+      displayPosts?: number;
+      overrunEvents?: number;
+      deadlineMiss?: number;
+    };
+    if (msg.type === "recycle" && msg.buffer) {
+      this.node?.port.postMessage({ type: "recycle_buf", buffer: msg.buffer }, [msg.buffer]);
+      return;
+    }
+    if (msg.type !== "meters") return;
+    const latency = Math.max(0, msg.latencyMs ?? 0);
+    if (this.snap.analysis.experiment.running) {
+      this.expLatencies.push(latency);
+      if (msg.processUs) this.expProcess.push(msg.processUs);
+    }
+    this.snap = {
+      ...this.snap,
+      analysis: {
+        ...this.snap.analysis,
+        rms: msg.rms ?? 0,
+        peak: msg.peak ?? 0,
+        peakHold: msg.peakHold ?? 0,
+        latencyMs: latency,
+        processUs: msg.processUs ?? 0,
+        writtenBlocks: msg.writtenBlocks ?? this.snap.analysis.writtenBlocks,
+        droppedBlocks: msg.droppedBlocks ?? this.snap.analysis.droppedBlocks,
+        analyzedBlocks: msg.analyzedBlocks ?? this.snap.analysis.analyzedBlocks,
+        displayPosts: msg.displayPosts ?? this.snap.analysis.displayPosts,
+        overrunEvents: msg.overrunEvents ?? this.snap.analysis.overrunEvents,
+        deadlineMiss: msg.deadlineMiss ?? this.snap.analysis.deadlineMiss,
+      },
+    };
+    this.scheduleEmit();
+  }
+
+  setAnalysisPath(path: AnalysisPath) {
+    if (path === "shared" && !this.isolated()) {
+      this.snap = {
+        ...this.snap,
+        analysis: { ...this.snap.analysis, path: "transfer" },
+      };
+      this.node?.port.postMessage({ type: "path", path: "transfer" });
+      this.emit();
+      return;
+    }
+    this.snap = { ...this.snap, analysis: { ...this.snap.analysis, path } };
+    this.node?.port.postMessage({ type: "path", path });
+    this.emit();
+  }
+
+  async setAnalysisSource(source: AnalysisSource) {
+    await this.ensure();
+    if (source === "mic") {
+      try {
+        this.micStream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        });
+        if (!this.ctx) return;
+        this.micNode?.disconnect();
+        this.micNode = this.ctx.createMediaStreamSource(this.micStream);
+        if (this.node) this.micNode.connect(this.node);
+        this.node?.port.postMessage({ type: "live", on: 3 });
+        this.snap = { ...this.snap, analysis: { ...this.snap.analysis, source: "mic" }, playing: true };
+        this.emit();
+      } catch (e) {
+        this.snap = {
+          ...this.snap,
+          error: String(e instanceof Error ? e.message : e),
+          analysis: { ...this.snap.analysis, source: "osc" },
+        };
+        this.emit();
+      }
+      return;
+    }
+    this.micNode?.disconnect();
+    this.micNode = null;
+    this.micStream?.getTracks().forEach((t) => t.stop());
+    this.micStream = null;
+    this.node?.port.postMessage({ type: "live", on: true });
+    this.snap = { ...this.snap, analysis: { ...this.snap.analysis, source: "osc" } };
+    this.emit();
+  }
+
+  cancelRingExperiment() {
+    this.expCancel = true;
+  }
+
+  async runRingExperiment(opts?: { path?: AnalysisPath; seconds?: number }) {
+    await this.ensure();
+    await this.waitReady();
+    const path = opts?.path ?? this.snap.analysis.path;
+    if (path === "shared" && !this.isolated()) {
+      const notes =
+        "SharedArrayBuffer needs cross-origin isolation (COOP + COEP). This page is not isolated, so the shared ring cannot run. Use the transfer path, or open the Vite dev server which sends those headers.";
+      this.snap = {
+        ...this.snap,
+        analysis: {
+          ...this.snap.analysis,
+          experiment: { ...EMPTY_EXPERIMENT, path, notes, pass: false },
+        },
+      };
+      this.emit();
+      return this.snap.analysis.experiment;
+    }
+    this.setAnalysisPath(path);
+    this.expCancel = false;
+    this.expLatencies = [];
+    this.expProcess = [];
+    const seconds = opts?.seconds ?? 60;
+    if (!this.snap.playing) await this.start();
+    const startWritten = this.ring ? snapshotHeader(this.ring.hdr).writtenBlocks : this.snap.analysis.writtenBlocks;
+    this.snap = {
+      ...this.snap,
+      analysis: {
+        ...this.snap.analysis,
+        experiment: {
+          ...EMPTY_EXPERIMENT,
+          running: true,
+          path,
+          seconds,
+        },
+      },
+    };
+    this.emit();
+
+    const t0 = performance.now();
+    while (!this.expCancel) {
+      const elapsed = (performance.now() - t0) / 1000;
+      this.busyStall(25);
+      this.snap = {
+        ...this.snap,
+        analysis: {
+          ...this.snap.analysis,
+          experiment: { ...this.snap.analysis.experiment, elapsed },
+        },
+      };
+      this.emit();
+      if (elapsed >= seconds) break;
+      await this.wait(200);
+    }
+
+    const hdr = this.ring ? snapshotHeader(this.ring.hdr) : null;
+    const intended = hdr ? hdr.writtenBlocks - startWritten : this.snap.analysis.writtenBlocks - startWritten;
+    const delivered = hdr ? hdr.analyzedBlocks : this.snap.analysis.analyzedBlocks;
+    const dropped = hdr ? hdr.droppedBlocks : this.snap.analysis.droppedBlocks;
+    const deadlineMiss = hdr ? hdr.deadlineMiss : this.snap.analysis.deadlineMiss;
+    const displayPosts = hdr ? hdr.displayPosts : this.snap.analysis.displayPosts;
+    const medianMs = percentile(this.expLatencies, 0.5);
+    const p99Ms = percentile(this.expLatencies, 0.99);
+    const processUs = percentile(this.expProcess, 0.5);
+    const ratio = intended > 0 ? delivered / intended : 0;
+    const pass = ratio >= 0.99 && p99Ms < 30 && deadlineMiss === 0;
+    const notes = pass
+      ? `${path} delivered ${(ratio * 100).toFixed(2)}% of quanta, p99 ${p99Ms.toFixed(2)} ms, zero deadline misses.`
+      : `${path} delivered ${(ratio * 100).toFixed(2)}% of quanta, p99 ${p99Ms.toFixed(2)} ms, deadline misses ${deadlineMiss}.`;
+    const experiment: RingExperiment = {
+      running: false,
+      path,
+      seconds,
+      elapsed: Math.min(seconds, (performance.now() - t0) / 1000),
+      intended,
+      delivered,
+      dropped,
+      medianMs,
+      p99Ms,
+      processUs,
+      stallMs: 25,
+      deadlineMiss,
+      displayPosts,
+      pass,
+      notes,
+    };
+    this.snap = { ...this.snap, analysis: { ...this.snap.analysis, experiment } };
+    this.emit();
+    return experiment;
+  }
+
+  private busyStall(ms: number) {
+    const t0 = performance.now();
+    while (performance.now() - t0 < ms) {
+      /* main-thread stall */
+    }
   }
 }
 

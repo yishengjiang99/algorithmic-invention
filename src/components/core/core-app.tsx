@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
-import { Activity, AudioLines, Code2, Shield } from "lucide-react";
+import { Activity, AudioLines, Code2, Shield, Waves } from "lucide-react";
 import { PlayView } from "./play-view";
 import { BenchView } from "./bench-view";
 import { DisciplineView } from "./discipline-view";
 import { CView } from "./c-view";
+import { RingView } from "./ring-view";
 import { getEngine } from "@/lib/wavetable/engine";
 import { cn } from "@/lib/utils";
 
 const TABS = [
   { id: "play", label: "Play", icon: AudioLines },
+  { id: "ring", label: "Ring", icon: Waves },
   { id: "bench", label: "Bench", icon: Activity },
   { id: "discipline", label: "Discipline", icon: Shield },
   { id: "c", label: "C", icon: Code2 },
@@ -81,13 +83,15 @@ export function CoreApp({ onBack }: { onBack?: () => void }) {
         </header>
 
         {tab === "play" ? <PlayView /> : null}
+        {tab === "ring" ? <RingView /> : null}
         {tab === "bench" ? <BenchView /> : null}
         {tab === "discipline" ? <DisciplineView /> : null}
         {tab === "c" ? <CView /> : null}
 
         <footer className="border-t border-border pt-4 text-xs text-subtle">
           C source is compiled in-page with wabt. WASM memory is one 64 KiB page.
-          process() allocates nothing.
+          process() allocates nothing. Analysis runs off a SharedArrayBuffer ring
+          when this document is cross-origin isolated.
         </footer>
       </div>
     </div>

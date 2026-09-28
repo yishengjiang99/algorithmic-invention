@@ -19,6 +19,7 @@ On first Play the page fetches `wavetable.c` and [wabt](https://github.com/WebAs
 | Play | WASM vs JS path, saw / square, 1–32 voices, scope, *Ode to Joy* |
 | Bench | Same oscillator loop in two languages at 1 / 8 / 16 / 32 voices |
 | Discipline | 32 voices, one 64 KiB WASM page, zero alloc in `process()` |
+| Ring | Lock-free SAB tap on the same worklet → worker RMS/peak meters |
 | C | The live `wavetable.c` that wabt assembled |
 
 `src/lib/scheduler` and `src/components/ahead` are an earlier look-ahead note scheduler (main thread timestamps, worklet starts on a sample boundary). It is in the tree; the home route is the invention + Core.
@@ -27,12 +28,15 @@ On first Play the page fetches `wavetable.c` and [wabt](https://github.com/WebAs
 
 ```
 score (JS)  →  AudioParam automation  →  worklet process()  →  C / WASM wavetable  →  speakers
+                                              └─ SAB ring  →  analysis worker  →  low-rate meters
 ```
 
 - [`src/lib/invention/generate.ts`](src/lib/invention/generate.ts) — D harmonic minor, scale-degree invert / transpose
 - [`src/lib/wavetable/engine.ts`](src/lib/wavetable/engine.ts) — `AudioContext` singleton, compile, schedule, bench
 - [`public/wavetable.c`](public/wavetable.c) — freestanding C, no malloc, no libm, no WASI
-- [`public/worklets/wavetable-processor.js`](public/worklets/wavetable-processor.js) — WASM + JS twins of the same loop
+- [`public/worklets/wavetable-processor.js`](public/worklets/wavetable-processor.js) — WASM + JS twins of the same loop; writes a SharedArrayBuffer ring from `process()`
+- [`src/lib/ring/spsc-ring.ts`](src/lib/ring/spsc-ring.ts) — lock-free SPSC ring (tests + layout)
+- [`docs/ring-buffer.md`](docs/ring-buffer.md) — buffer layout, overflow, ordering, capacity
 - [`wasm/wavetable/src/lib.rs`](wasm/wavetable/src/lib.rs) — `no_std` Rust twin (not the live path)
 
 WASM memory is one page (`initial = max = 1`). `process()` does not allocate.
@@ -49,6 +53,7 @@ Open the printed local URL. First Play needs a user gesture (browser autoplay po
 ```bash
 npm run build
 npm run typecheck
+npm test
 ```
 
 Pushes to `main` build a static site and publish it to GitHub Pages (`.github/workflows/pages.yml`). Locally:

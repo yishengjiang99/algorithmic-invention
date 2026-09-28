@@ -17,6 +17,22 @@ const MAX_VOICES = 32;
 const OUT_CAP = 256;
 const BINS = 256;
 const POST_EVERY = 32;
+const RING_HEADER_INTS = 16;
+const RING_HEADER_BYTES = 64;
+const RING_H_WRITE = 0;
+const RING_H_READ = 1;
+const RING_H_CAP = 2;
+const RING_H_OVERRUN_SAMPLES = 3;
+const RING_H_OVERRUN_EVENTS = 4;
+const RING_H_WRITTEN_BLOCKS = 5;
+const RING_H_DROPPED_BLOCKS = 6;
+const RING_H_WRITE_TIME = 7;
+const RING_H_PROCESS_US = 8;
+const RING_H_DEADLINE_MISS = 9;
+const RING_H_LAST_BLOCK = 14;
+const XFER_POOL = 64;
+const XFER_FRAMES = 256;
+
 
 function nowMs() {
   const p = globalThis.performance;
@@ -120,7 +136,22 @@ class WavetableProcessor extends AudioWorkletProcessor {
     this.ready = 0;
     this.hasHiRes = !!(globalThis.performance && typeof globalThis.performance.now === "function");
 
+    this.ringHdr = null;
+    this.ringSamples = null;
+    this.ringCap = 0;
+    this.ringMask = 0;
+    this.ringPath = 0;
+    this.xferPool = [];
+    this.xferFree = new Int32Array(XFER_POOL);
+    this.xferTop = 0;
+    for (let i = 0; i < XFER_POOL; i++) {
+      this.xferPool[i] = new Float32Array(XFER_FRAMES);
+      this.xferFree[i] = i;
+      this.xferTop++;
+    }
+
     this.port.onmessage = (ev) => this.onMsg(ev.data);
+
   }
 
   onMsg(data) {
@@ -192,6 +223,31 @@ class WavetableProcessor extends AudioWorkletProcessor {
     }
     if (type === "measure") {
       this.runMeasure(data.ms | 0, data.frames | 0);
+      return;
+    }
+    if (type === "ring" && data.sab) {
+      this.ringHdr = new Int32Array(data.sab, 0, RING_HEADER_INTS);
+      this.ringCap = Atomics.load(this.ringHdr, RING_H_CAP);
+      this.ringMask = this.ringCap - 1;
+      this.ringSamples = new Float32Array(data.sab, RING_HEADER_BYTES, this.ringCap);
+      this.ringPath = 0;
+      Atomics.store(this.ringHdr, 13, 1);
+      return;
+    }
+    if (type === "path") {
+      this.ringPath = data.path === "transfer" ? 1 : 0;
+      return;
+    }
+    if (type === "recycle" && data.index >= 0) {
+      if (this.xferTop < XFER_POOL) this.xferFree[this.xferTop++] = data.index | 0;
+      return;
+    }
+    if (type === "recycle_buf" && data.buffer) {
+      if (this.xferTop < XFER_POOL) {
+        this.xferPool[this.xferTop] = new Float32Array(data.buffer);
+        this.xferFree[this.xferTop] = this.xferTop;
+        this.xferTop++;
+      }
     }
   }
 
@@ -409,6 +465,57 @@ class WavetableProcessor extends AudioWorkletProcessor {
     });
   }
 
+  tapShared(src, n, processUs) {
+    const hdr = this.ringHdr;
+    const buf = this.ringSamples;
+    if (!hdr || !buf) return;
+    const cap = this.ringCap;
+    const mask = this.ringMask;
+    const w = Atomics.load(hdr, RING_H_WRITE);
+    const r = Atomics.load(hdr, RING_H_READ);
+    const used = (w - r) >>> 0;
+    if (used + n > cap) {
+      const drop = used + n - cap;
+      Atomics.add(hdr, RING_H_READ, drop);
+      Atomics.add(hdr, RING_H_OVERRUN_SAMPLES, drop);
+      Atomics.add(hdr, RING_H_OVERRUN_EVENTS, 1);
+      Atomics.add(hdr, RING_H_DROPPED_BLOCKS, 1);
+    }
+    let idx = w & mask;
+    const first = n < cap - idx ? n : cap - idx;
+    for (let i = 0; i < first; i++) buf[idx + i] = src[i];
+    for (let i = first; i < n; i++) buf[i - first] = src[i];
+    const budget = n * this.invSr * 1e6;
+    Atomics.store(hdr, RING_H_PROCESS_US, processUs | 0);
+    if (processUs > budget) Atomics.add(hdr, RING_H_DEADLINE_MISS, 1);
+    Atomics.store(hdr, RING_H_WRITE_TIME, (nowMs() * 100) | 0);
+    Atomics.store(hdr, RING_H_LAST_BLOCK, n | 0);
+    Atomics.add(hdr, RING_H_WRITTEN_BLOCKS, 1);
+    Atomics.add(hdr, 12, 1);
+    Atomics.add(hdr, RING_H_WRITE, n);
+  }
+
+  tapTransfer(src, n, processUs) {
+    if (this.xferTop <= 0) {
+      if (this.ringHdr) Atomics.add(this.ringHdr, RING_H_DROPPED_BLOCKS, 1);
+      this.port.postMessage({ type: "xfer_drop" });
+      return;
+    }
+    const slot = this.xferFree[--this.xferTop];
+    const buf = this.xferPool[slot];
+    const frames = n < buf.length ? n : buf.length;
+    for (let i = 0; i < frames; i++) buf[i] = src[i];
+    if (this.ringHdr) {
+      Atomics.store(this.ringHdr, RING_H_PROCESS_US, processUs | 0);
+      Atomics.add(this.ringHdr, RING_H_WRITTEN_BLOCKS, 1);
+    }
+    this.port.postMessage(
+      { type: "xfer_block", samples: buf.buffer, n: frames, t0: nowMs(), processUs, index: slot },
+      [buf.buffer],
+    );
+    this.xferPool[slot] = null;
+  }
+
   process(_inputs, outputs, parameters) {
     try {
       const out = outputs[0] && outputs[0][0];
@@ -419,16 +526,28 @@ class WavetableProcessor extends AudioWorkletProcessor {
       const freq2 = parameters.frequency2 ? parameters.frequency2[0] : freq;
       const gain2 = parameters.gain2 ? parameters.gain2[0] : 0;
 
-      if (this.live === 2) this.applyDuetParams(freq, gain, freq2, gain2);
-      else if (this.live) this.applyLiveParams(freq, gain);
+      const input = _inputs[0] && _inputs[0][0];
+      if (this.live === 3 && input) {
+        for (let i = 0; i < n; i++) out[i] = input[i];
+        const us = 0;
+        this.record(us, n);
+        if (this.ringPath === 1) this.tapTransfer(out, n, us);
+        else this.tapShared(out, n, us);
+      } else {
+        if (this.live === 2) this.applyDuetParams(freq, gain, freq2, gain2);
+        else if (this.live) this.applyLiveParams(freq, gain);
 
-      const t0 = nowMs();
-      const useWasm = this.dsp(n);
-      const us = (nowMs() - t0) * 1000;
-      this.record(us, n);
+        const t0 = nowMs();
+        const useWasm = this.dsp(n);
+        const us = (nowMs() - t0) * 1000;
+        this.record(us, n);
 
-      const src = useWasm ? this.outView : this.jsOut;
-      for (let i = 0; i < n; i++) out[i] = src[i];
+        const src = useWasm ? this.outView : this.jsOut;
+        for (let i = 0; i < n; i++) out[i] = src[i];
+
+        if (this.ringPath === 1) this.tapTransfer(src, n, us);
+        else this.tapShared(src, n, us);
+      }
 
       this.sincePost++;
       if (this.quanta === 1 || this.sincePost >= POST_EVERY) {
