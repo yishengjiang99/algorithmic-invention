@@ -12,6 +12,10 @@ export default defineConfig(({ command, isPreview }) => ({
   server: {
     host: "0.0.0.0",
     port: 5173,
+    headers: {
+      "Cross-Origin-Opener-Policy": "same-origin",
+      "Cross-Origin-Embedder-Policy": "credentialless",
+    },
   },
   preview: {
     host: "127.0.0.1",
