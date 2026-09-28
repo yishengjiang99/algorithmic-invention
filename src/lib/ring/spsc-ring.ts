@@ -4,7 +4,8 @@
  * Layout
  * ------
  *   Int32 header[16]          64 bytes
- *   Float32 samples[capacity] capacity is a power of two
+ *   Float32 samples[capacity]
+ *   Int32 stamps[capacity]    worklet performance.now() * 100 per sample
  *
  * Header
  * ------
@@ -65,6 +66,7 @@ export type RingViews = {
   sab: SharedArrayBuffer | ArrayBuffer;
   hdr: Int32Array;
   samples: Float32Array;
+  stamps: Int32Array;
   cap: number;
   mask: number;
 };
@@ -73,7 +75,7 @@ export function ringBytes(capacity: number): number {
   if (capacity < 2 || (capacity & (capacity - 1)) !== 0) {
     throw new Error("ring capacity must be a power of two");
   }
-  return HEADER_BYTES + capacity * 4;
+  return HEADER_BYTES + capacity * 8;
 }
 
 export function createRing(
@@ -89,8 +91,9 @@ export function createRing(
   if (sab.byteLength < bytes) throw new Error("ring backing too small");
   const hdr = new Int32Array(sab, 0, HEADER_INTS);
   const samples = new Float32Array(sab, HEADER_BYTES, capacity);
+  const stamps = new Int32Array(sab, HEADER_BYTES + capacity * 4, capacity);
   Atomics.store(hdr, H.CAP, capacity);
-  return { sab, hdr, samples, cap: capacity, mask: capacity - 1 };
+  return { sab, hdr, samples, stamps, cap: capacity, mask: capacity - 1 };
 }
 
 export function attachRing(sab: SharedArrayBuffer | ArrayBuffer): RingViews {
@@ -98,7 +101,8 @@ export function attachRing(sab: SharedArrayBuffer | ArrayBuffer): RingViews {
   const cap = Atomics.load(hdr, H.CAP);
   if (cap < 2 || (cap & (cap - 1)) !== 0) throw new Error("invalid ring capacity");
   const samples = new Float32Array(sab, HEADER_BYTES, cap);
-  return { sab, hdr, samples, cap, mask: cap - 1 };
+  const stamps = new Int32Array(sab, HEADER_BYTES + cap * 4, cap);
+  return { sab, hdr, samples, stamps, cap, mask: cap - 1 };
 }
 
 export function available(hdr: Int32Array): number {
@@ -133,7 +137,7 @@ export function writeSamples(
   budgetUs = 0,
   nowCentiMs = 0,
 ): number {
-  const { hdr, samples, cap, mask } = ring;
+  const { hdr, samples, stamps, cap, mask } = ring;
   if (n <= 0) return 0;
   const w = Atomics.load(hdr, H.WRITE);
   const r = Atomics.load(hdr, H.READ);
@@ -146,8 +150,15 @@ export function writeSamples(
   }
   const idx = w & mask;
   const first = n < cap - idx ? n : cap - idx;
-  for (let i = 0; i < first; i++) samples[idx + i] = src[i] as number;
-  for (let i = first; i < n; i++) samples[i - first] = src[i] as number;
+  const stamp = nowCentiMs | 0;
+  for (let i = 0; i < first; i++) {
+    samples[idx + i] = src[i] as number;
+    stamps[idx + i] = stamp;
+  }
+  for (let i = first; i < n; i++) {
+    samples[i - first] = src[i] as number;
+    stamps[i - first] = stamp;
+  }
   if (processUs) Atomics.store(hdr, H.PROCESS_US, processUs | 0);
   if (budgetUs > 0 && processUs > budgetUs) Atomics.add(hdr, H.DEADLINE_MISS, 1);
   if (nowCentiMs) Atomics.store(hdr, H.WRITE_TIME, nowCentiMs | 0);

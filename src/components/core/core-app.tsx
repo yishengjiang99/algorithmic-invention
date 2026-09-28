@@ -90,8 +90,8 @@ export function CoreApp({ onBack }: { onBack?: () => void }) {
 
         <footer className="border-t border-border pt-4 text-xs text-subtle">
           C source is compiled in-page with wabt. WASM memory is one 64 KiB page.
-          process() allocates nothing. Analysis runs off a SharedArrayBuffer ring
-          when this document is cross-origin isolated.
+          The shared analysis ring does not allocate in process(). Transfer mode
+          reuses a preallocated message pool.
         </footer>
       </div>
     </div>

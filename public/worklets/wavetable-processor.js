@@ -139,6 +139,7 @@ class WavetableProcessor extends AudioWorkletProcessor {
 
     this.ringHdr = null;
     this.ringSamples = null;
+    this.ringStamps = null;
     this.ringCap = 0;
     this.ringMask = 0;
     this.ringPath = 0;
@@ -150,6 +151,17 @@ class WavetableProcessor extends AudioWorkletProcessor {
       this.xferFree[i] = i;
       this.xferTop++;
     }
+    this.xferMsg = {
+      type: "xfer_block",
+      samples: null,
+      n: 0,
+      t0: 0,
+      timeOrigin: performance.timeOrigin,
+      processUs: 0,
+      missed: 0,
+    };
+    this.xferXfer = [null];
+    this.xferDropMsg = { type: "xfer_drop", n: 0, processUs: 0, missed: 0 };
 
     this.port.onmessage = (ev) => this.onMsg(ev.data);
 
@@ -231,6 +243,7 @@ class WavetableProcessor extends AudioWorkletProcessor {
       this.ringCap = Atomics.load(this.ringHdr, RING_H_CAP);
       this.ringMask = this.ringCap - 1;
       this.ringSamples = new Float32Array(data.sab, RING_HEADER_BYTES, this.ringCap);
+      this.ringStamps = new Int32Array(data.sab, RING_HEADER_BYTES + this.ringCap * 4, this.ringCap);
       this.ringPath = 0;
       Atomics.store(this.ringHdr, 13, 1);
       this.port.postMessage({
@@ -474,7 +487,8 @@ class WavetableProcessor extends AudioWorkletProcessor {
   tapShared(src, n, processUs) {
     const hdr = this.ringHdr;
     const buf = this.ringSamples;
-    if (!hdr || !buf) return;
+    const stamps = this.ringStamps;
+    if (!hdr || !buf || !stamps) return;
     const cap = this.ringCap;
     const mask = this.ringMask;
     const w = Atomics.load(hdr, RING_H_WRITE);
@@ -488,12 +502,19 @@ class WavetableProcessor extends AudioWorkletProcessor {
     }
     const idx = w & mask;
     const first = n < cap - idx ? n : cap - idx;
-    for (let i = 0; i < first; i++) buf[idx + i] = src[i];
-    for (let i = first; i < n; i++) buf[i - first] = src[i];
+    const stamp = (nowMs() * 100) | 0;
+    for (let i = 0; i < first; i++) {
+      buf[idx + i] = src[i];
+      stamps[idx + i] = stamp;
+    }
+    for (let i = first; i < n; i++) {
+      buf[i - first] = src[i];
+      stamps[i - first] = stamp;
+    }
     const budget = n * this.invSr * 1e6;
     Atomics.store(hdr, RING_H_PROCESS_US, processUs | 0);
     if (processUs > budget) Atomics.add(hdr, RING_H_DEADLINE_MISS, 1);
-    Atomics.store(hdr, RING_H_WRITE_TIME, (nowMs() * 100) | 0);
+    Atomics.store(hdr, RING_H_WRITE_TIME, stamp);
     Atomics.store(hdr, RING_H_LAST_BLOCK, n | 0);
     Atomics.add(hdr, RING_H_WRITTEN_BLOCKS, 1);
     Atomics.add(hdr, 12, 1);
@@ -504,25 +525,24 @@ class WavetableProcessor extends AudioWorkletProcessor {
     const budget = n * this.invSr * 1e6;
     const missed = processUs > budget ? 1 : 0;
     if (this.xferTop <= 0) {
-      this.port.postMessage({ type: "xfer_drop", n, processUs, missed });
+      this.xferDropMsg.n = n;
+      this.xferDropMsg.processUs = processUs;
+      this.xferDropMsg.missed = missed;
+      this.port.postMessage(this.xferDropMsg);
       return;
     }
     const slot = this.xferFree[--this.xferTop];
     const buf = this.xferPool[slot];
     const frames = n < buf.length ? n : buf.length;
     for (let i = 0; i < frames; i++) buf[i] = src[i];
-    this.port.postMessage(
-      {
-        type: "xfer_block",
-        samples: buf.buffer,
-        n: frames,
-        t0: nowMs(),
-        timeOrigin: performance.timeOrigin,
-        processUs,
-        missed,
-      },
-      [buf.buffer],
-    );
+    const msg = this.xferMsg;
+    msg.samples = buf.buffer;
+    msg.n = frames;
+    msg.t0 = nowMs();
+    msg.processUs = processUs;
+    msg.missed = missed;
+    this.xferXfer[0] = buf.buffer;
+    this.port.postMessage(msg, this.xferXfer);
     this.xferPool[slot] = null;
   }
 
@@ -538,11 +558,11 @@ class WavetableProcessor extends AudioWorkletProcessor {
 
       const input = _inputs[0] && _inputs[0][0];
       if (this.live === 3 && input) {
-        for (let i = 0; i < n; i++) out[i] = input[i];
+        for (let i = 0; i < n; i++) out[i] = 0;
         const us = 0;
         this.record(us, n);
-        if (this.ringPath === 1) this.tapTransfer(out, n, us);
-        else this.tapShared(out, n, us);
+        if (this.ringPath === 1) this.tapTransfer(input, n, us);
+        else this.tapShared(input, n, us);
       } else {
         if (this.live === 2) this.applyDuetParams(freq, gain, freq2, gain2);
         else if (this.live) this.applyLiveParams(freq, gain);

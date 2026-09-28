@@ -8,7 +8,8 @@ wavetable output. The audio thread never waits on the worker.
 ```
 SharedArrayBuffer
  ├─ Int32 header[16]           64 bytes
- └─ Float32 samples[32768]     128 KiB, capacity is a power of two
+ ├─ Float32 samples[32768]
+ └─ Int32 stamps[32768]        worklet performance.now() * 100
 ```
 
 | Index | Name | Who writes |
@@ -45,6 +46,9 @@ buffer.
    `compareExchange(read, expected, expected + n)`.
 4. A failed CAS means that window is dropped instead of moving `read`
    backwards. The producer never stores `read`.
+
+Latency is the age of the oldest sample in the window the worker just
+consumed (`stamps[read]`), not the latest write cursor.
 
 ## Capacity
 

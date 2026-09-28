@@ -465,7 +465,7 @@ export class CoreEngine {
         if (!r.ok) throw new Error("Failed to fetch wavetable.c");
         return r.text();
       }),
-      ctx.audioWorklet.addModule(assetUrl("worklets/wavetable-processor.js") + "?v=9"),
+      ctx.audioWorklet.addModule(assetUrl("worklets/wavetable-processor.js") + "?v=10"),
     ]);
     this.snap = { ...this.snap, cSource };
     this.emit();
@@ -1296,6 +1296,7 @@ export class CoreEngine {
         this.micNode = this.ctx.createMediaStreamSource(this.micStream);
         if (this.node) this.micNode.connect(this.node);
         this.node?.port.postMessage({ type: "live", on: 3 });
+        if (this.gainNode) this.gainNode.gain.setValueAtTime(0, this.ctx.currentTime);
         this.snap = { ...this.snap, analysis: { ...this.snap.analysis, source: "mic" }, playing: true };
         this.emit();
       } catch (e) {
@@ -1313,6 +1314,9 @@ export class CoreEngine {
     this.micStream?.getTracks().forEach((t) => t.stop());
     this.micStream = null;
     this.node?.port.postMessage({ type: "live", on: true });
+    if (this.ctx && this.gainNode && this.snap.playing) {
+      this.gainNode.gain.setTargetAtTime(0.9, this.ctx.currentTime, 0.02);
+    }
     this.snap = { ...this.snap, analysis: { ...this.snap.analysis, source: "osc" } };
     this.emit();
   }
@@ -1385,9 +1389,12 @@ export class CoreEngine {
 
     await this.wait(50);
     const a1 = this.snap.analysis;
-    const intended = Math.max(0, a1.producedSamples - this.expBase.producedSamples);
-    const delivered = Math.max(0, a1.consumedSamples - this.expBase.consumedSamples);
+    const committed = Math.max(0, a1.consumedSamples - this.expBase.consumedSamples);
     const dropped = Math.max(0, a1.droppedSamples - this.expBase.droppedSamples);
+    const offered = Math.max(0, a1.producedSamples - this.expBase.producedSamples);
+    const pending = Math.max(0, offered - committed - dropped);
+    const intended = committed + dropped + pending;
+    const delivered = committed;
     const deadlineMiss = Math.max(0, a1.deadlineMiss - this.expBase.deadlineMiss);
     const displayPosts = Math.max(0, a1.displayPosts - this.expBase.displayPosts);
     const medianMs = percentile(this.expLatencies, 0.5);
@@ -1398,8 +1405,8 @@ export class CoreEngine {
     const notes = intended === 0
       ? `${path} produced no analysis samples. Start audio first.`
       : pass
-        ? `${path} delivered ${(ratio * 100).toFixed(2)}% of produced samples, p99 ${p99Ms.toFixed(2)} ms, zero deadline misses.`
-        : `${path} delivered ${(ratio * 100).toFixed(2)}% of produced samples, p99 ${p99Ms.toFixed(2)} ms, deadline misses ${deadlineMiss}.`;
+        ? `${path} delivered ${(ratio * 100).toFixed(2)}% of offered samples, p99 ${p99Ms.toFixed(2)} ms, zero deadline misses.`
+        : `${path} delivered ${(ratio * 100).toFixed(2)}% of offered samples, p99 ${p99Ms.toFixed(2)} ms, deadline misses ${deadlineMiss}.`;
     const experiment: RingExperiment = {
       running: false,
       path,

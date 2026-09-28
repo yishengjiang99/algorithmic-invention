@@ -65,8 +65,11 @@ export function RingView() {
               The existing <code className="text-fg">WavetableProcessor</code> writes
               each output quantum into a preallocated SharedArrayBuffer ring.
               A worker reads it, computes RMS and peak, and posts only low-rate
-              meter values. <code className="text-fg">process()</code> still
-              allocates nothing.
+              meter values. The shared path allocates nothing in{" "}
+              <code className="text-fg">process()</code>. The transferable
+              fallback reuses a preallocated message and buffer pool — it is
+              the path GitHub Pages can run without isolation. Microphone input
+              is analyzed silently and is not routed to the speakers.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
