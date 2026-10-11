@@ -2,7 +2,7 @@
 
 A two-part invention in D minor, grown from one motif and played by a **band-limited wavetable written in C**, compiled to WASM in the browser, and rendered on the audio thread.
 
-**Live:** [yishengjiang99.github.io/algorithmic-invention](https://yishengjiang99.github.io/algorithmic-invention/)
+**Live:** [algorithmic-invention.grepawk.com](https://algorithmic-invention.grepawk.com/) (needs cross-origin isolation, so the old GitHub Pages URL now redirects here)
 
 [https://github.com/yishengjiang99/algorithmic-invention](https://github.com/yishengjiang99/algorithmic-invention)
 

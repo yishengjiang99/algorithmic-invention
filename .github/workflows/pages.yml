@@ -19,18 +19,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - name: Build static site
-        run: npm run build:pages
-        env:
-          VITE_BASE: /algorithmic-invention/
+      # The app needs SharedArrayBuffer (COOP/COEP), which GitHub Pages can't send.
+      # Pages now only publishes a redirect to the canonical host.
       - uses: actions/upload-pages-artifact@v4
         with:
-          path: dist
+          path: pages-redirect
 
   deploy:
     needs: build

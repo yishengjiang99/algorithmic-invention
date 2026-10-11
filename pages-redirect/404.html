@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Algorithmic Invention has moved</title>
+    <meta name="robots" content="noindex" />
+    <link rel="canonical" href="https://algorithmic-invention.grepawk.com/" />
+    <meta http-equiv="refresh" content="0; url=https://algorithmic-invention.grepawk.com/" />
+    <script>
+      // The app needs SharedArrayBuffer (cross-origin isolation via COOP/COEP),
+      // which GitHub Pages cannot provide. Forward to the canonical host,
+      // keeping any sub-path, query and hash.
+      (function () {
+        var base = "/algorithmic-invention";
+        var p = location.pathname;
+        if (p.indexOf(base) === 0) p = p.slice(base.length);
+        if (!p || p.charAt(0) !== "/") p = "/" + (p || "");
+        location.replace("https://algorithmic-invention.grepawk.com" + p + location.search + location.hash);
+      })();
+    </script>
+    <style>
+      body { font-family: system-ui, sans-serif; background: #0a0b0d; color: #e6e6e6; display: grid; place-items: center; min-height: 100vh; margin: 0; }
+      a { color: #d4b26a; }
+    </style>
+  </head>
+  <body>
+    <p>Algorithmic Invention lives at <a href="https://algorithmic-invention.grepawk.com/">algorithmic-invention.grepawk.com</a>.</p>
+  </body>
+</html>
