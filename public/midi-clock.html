@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>MIDI clock follower</title>
+<meta name="description" content="Follow an external MIDI clock: worker-side tempo and phase estimation, sample-accurate click in an AudioWorklet."/>
+<meta name="theme-color" content="#0a0b0d"/>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0b0d'/%3E%3Cpath d='M11 6 L25 16 L11 26 L8 23 L19 16 L8 9 Z' fill='%23ecece8'/%3E%3C/svg%3E"/>
+<style>
+:root {
+  --bg:#0a0b0d; --surface:#121418; --surface-2:#1a1d22; --fg:#ecece8;
+  --muted:#8b8f98; --subtle:#5c616b; --primary:#c5ccd6; --primary-fg:#0a0b0d;
+  --accent:#9eb0c8; --border:#262a31; --ok:#7d9e8e; --warn:#c4a882; --danger:#c47a72;
+}
+* { box-sizing: border-box; }
+html, body { margin:0; background:var(--bg); color:var(--fg);
+  font-family:"IBM Plex Sans", system-ui, sans-serif; -webkit-font-smoothing:antialiased; min-height:100dvh; }
+button, input, select { font: inherit; }
+button { cursor: pointer; }
+code, .mono { font-family:"IBM Plex Mono", ui-monospace, monospace; }
+.wrap { max-width: 56rem; margin: 0 auto; padding: 1.5rem 1rem 2.5rem; display:flex; flex-direction:column; gap:1.25rem; }
+.kicker { font-family:"IBM Plex Mono", monospace; font-size:12px; letter-spacing:.18em; text-transform:uppercase; color:var(--subtle); }
+h1 { font-size:2rem; font-weight:500; letter-spacing:-.03em; margin:.25rem 0 0; }
+h2 { font-size:1rem; font-weight:500; margin:0 0 .6rem; }
+.lede { max-width:40rem; color:var(--muted); font-size:.9rem; line-height:1.55; margin:.5rem 0 0; }
+.card { background:var(--surface); border-radius:16px; padding:1.1rem 1.15rem; }
+.row { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; }
+.btn { height:2.5rem; border:0; border-radius:12px; padding:0 1rem; font-size:.875rem; font-weight:500;
+  background:var(--primary); color:var(--primary-fg); }
+.btn.sec { background:var(--surface-2); color:var(--fg); box-shadow:0 0 0 1px rgba(255,255,255,.08); }
+.btn:focus-visible, select:focus-visible, input:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+label { color:var(--muted); font-size:.8rem; display:inline-flex; gap:.4rem; align-items:center; }
+input[type=number], select { background:var(--surface-2); color:var(--fg); border:1px solid var(--border); border-radius:8px; height:2.25rem; padding:0 .5rem; }
+input[type=number] { width:5rem; }
+.readout { display:grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap:.75rem; }
+.stat { background:var(--surface-2); border-radius:12px; padding:.7rem .9rem; }
+.stat .k { font-size:.7rem; letter-spacing:.12em; text-transform:uppercase; color:var(--subtle); }
+.stat .v { font-family:"IBM Plex Mono", monospace; font-size:1.6rem; margin-top:.15rem; }
+#state[data-state="running"] { color:var(--ok); }
+#state[data-state="lost"], #state[data-state="disconnected"] { color:var(--danger); }
+#state[data-state="armed"] { color:var(--warn); }
+.bar { height:10px; border-radius:6px; background:var(--surface-2); overflow:hidden; margin-top:.9rem; }
+.bar > div { height:100%; width:100%; background:var(--accent); transform-origin:left; transform:scaleX(0); }
+.muted { color:var(--muted); font-size:.85rem; line-height:1.55; margin:.4rem 0 0; }
+#lost { font-family:"IBM Plex Mono", monospace; font-size:.85rem; margin-top:.6rem; }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header>
+    <div class="kicker">Core / MIDI</div>
+    <h1>MIDI clock follower</h1>
+    <p class="lede">Receives F8 clock and FA/FB/FC transport over Web MIDI (or a synthetic 120&nbsp;BPM source), estimates tempo and beat phase in a Worker, and schedules a click in an AudioWorklet against the audio clock. See <code>docs/midi-clock-follower.md</code>.</p>
+  </header>
+
+  <section class="card" aria-labelledby="h-readout">
+    <h2 id="h-readout">Follower</h2>
+    <div class="readout" role="status" aria-live="off">
+      <div class="stat"><div class="k">Transport</div><div class="v" id="state">idle</div></div>
+      <div class="stat"><div class="k">BPM</div><div class="v" id="bpm">—</div></div>
+      <div class="stat"><div class="k">Beat phase</div><div class="v" id="phase">—</div></div>
+      <div class="stat"><div class="k">Beat #</div><div class="v" id="beat">—</div></div>
+    </div>
+    <div class="bar" aria-hidden="true"><div id="phase-bar"></div></div>
+    <div id="lost" role="status" aria-live="polite">settling</div>
+    <p class="muted mono" id="clocks"></p>
+    <p class="muted mono" id="clicks"></p>
+    <p class="muted mono" id="audio-state">audio off</p>
+    <p class="muted mono" id="detail"></p>
+  </section>
+
+  <section class="card" aria-labelledby="h-src">
+    <h2 id="h-src">Source</h2>
+    <div class="row">
+      <button class="btn" id="btn-audio" type="button">Enable audio</button>
+      <button class="btn sec" id="btn-source-synth" type="button">Synthetic source</button>
+      <button class="btn sec" id="btn-source-midi" type="button">Web MIDI input</button>
+      <label>Input <select id="midi-input" aria-label="MIDI input"></select></label>
+    </div>
+    <p class="muted" id="midi-note">Synthetic source is active. Click “Enable audio” (browsers need a gesture), then Start.</p>
+  </section>
+
+  <section class="card" aria-labelledby="h-synth">
+    <h2 id="h-synth">Synthetic source</h2>
+    <div class="row">
+      <button class="btn" id="btn-start" type="button">Start (FA)</button>
+      <button class="btn sec" id="btn-continue" type="button">Continue (FB)</button>
+      <button class="btn sec" id="btn-stop" type="button">Stop (FC)</button>
+    </div>
+    <div class="row" style="margin-top:.75rem">
+      <label>BPM <input id="synth-bpm" type="number" min="30" max="300" step="1" value="120"/></label>
+      <label>Jitter ±ms <input id="synth-jitter" type="number" min="0" max="10" step="0.5" value="0"/></label>
+      <label>Drop % <input id="synth-drop" type="number" min="0" max="50" step="1" value="0"/></label>
+    </div>
+    <div class="row" style="margin-top:.75rem">
+      <button class="btn sec" id="btn-silence" type="button">Silence clocks</button>
+      <button class="btn sec" id="btn-resume-clocks" type="button">Resume clocks</button>
+      <button class="btn sec" id="btn-unplug" type="button">Unplug device</button>
+      <button class="btn sec" id="btn-replug" type="button">Replug device</button>
+      <button class="btn sec" id="btn-dispose" type="button">Dispose all</button>
+    </div>
+  </section>
+</main>
+<script type="module" src="./midi-clock/app.js"></script>
+</body>
+</html>
