@@ -42,7 +42,7 @@ The worklet compares `audioTime × sampleRate` with `currentFrame` per sample, s
 
 `DEFAULT_LOST_TIMEOUT_MS = 250`, checked by a Worker interval every `WATCHDOG_MS = 25`.
 
-- Loss is declared when no *accepted* clock has arrived for more than 250 ms while clocks are required (armed, running, or stopped without an explicit Stop). Worst-case detection latency from the last clock is 250 + 25 = 275 ms, plus one `postMessage` hop; the budget is 500 ms. Measured: 250.3 ms in headless Chromium (see the PR), < 275 ms in the deterministic tests at 30 to 300 BPM.
+- Loss is declared when no *accepted* clock has arrived for more than 250 ms while clocks are required (armed, running, or stopped without an explicit Stop). Worst-case detection latency from the last clock is 250 + 25 = 275 ms, plus one `postMessage` hop; the budget is 500 ms. Measured in headless Chromium over three runs: 250.3, 252.2 and 265.3 ms, < 275 ms in the deterministic tests at 30 to 300 BPM.
 - 250 ms is 3 ticks at the slowest supported tempo (30 BPM, 83 ms/tick) and 12 ticks at 120 BPM, so the 1% random missing clocks and short dropouts never trip it (tested), while a cable pull is reported within a quarter of a second.
 - The watchdog lives in the Worker, not on the main thread, so a busy UI thread cannot delay it.
 - A device that sends Stop and then goes quiet is **not** lost: clocks are not required after an explicit Stop.
