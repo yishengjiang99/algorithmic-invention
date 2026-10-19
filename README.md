@@ -37,6 +37,7 @@ score (JS)  →  AudioParam automation  →  worklet process()  →  C / WASM wa
 - [`public/worklets/wavetable-processor.js`](public/worklets/wavetable-processor.js) — WASM + JS twins of the same loop; writes a SharedArrayBuffer ring from `process()`
 - [`src/lib/ring/spsc-ring.ts`](src/lib/ring/spsc-ring.ts) — lock-free SPSC ring (tests + layout)
 - [`docs/ring-buffer.md`](docs/ring-buffer.md) — buffer layout, overflow, ordering, capacity
+- [`public/midi-clock.html`](public/midi-clock.html) — framework-free MIDI clock follower demo (Web MIDI or synthetic source → Worker estimator → AudioWorklet click); see [`docs/midi-clock-follower.md`](docs/midi-clock-follower.md) and [`docs/midi-clock-experiment.md`](docs/midi-clock-experiment.md)
 - [`wasm/wavetable/src/lib.rs`](wasm/wavetable/src/lib.rs) — `no_std` Rust twin (not the live path)
 
 WASM memory is one page (`initial = max = 1`). `process()` does not allocate.

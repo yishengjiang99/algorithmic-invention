@@ -1,0 +1,20 @@
+/** Worker -> main snapshot layout (Float64Array). Shared by the Worker and the page. */
+export const SNAP = Object.freeze({
+  SEQ: 0,
+  STATE: 1,
+  BPM: 2,
+  PERIOD: 3,
+  ANCHOR_TIME: 4,
+  ANCHOR_SONG_TICK: 5,
+  RUN_ID: 6,
+  READY: 7,
+  LOST_COUNT: 8,
+  CLOCKS: 9,
+  DUPLICATES: 10,
+  GAPS: 11,
+  RESYNCS: 12,
+  LAST_CLOCK: 13,
+  RESUME_TICK: 14,
+  NOW: 15,
+  LEN: 16,
+});

@@ -12,7 +12,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "test": "node --test src/lib/ring/spsc-ring.test.mjs"
+    "test": "node --test src/lib/ring/spsc-ring.test.mjs src/lib/midi-clock/*.test.mjs",
+    "experiment:midi-clock": "node scripts/midi-clock-experiment.mjs"
   },
   "dependencies": {
     "@radix-ui/react-slider": "^1.3.6",
